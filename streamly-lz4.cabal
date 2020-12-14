@@ -15,6 +15,8 @@ build-type:          Simple
 extra-source-files:  CHANGELOG.md
                    , NOTICE
                    , README.md
+                   , c/lz4.c
+                   , c/lz4.h
 
 source-repository head
   type: git
