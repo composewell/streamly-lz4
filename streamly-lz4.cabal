@@ -1,8 +1,7 @@
 cabal-version:       2.2
 name:                streamly-lz4
 version:             0.1.0
--- synopsis:
--- description:
+synopsis:            Streamly combinators for LZ4 compression
 license:             Apache-2.0
 license-file:        LICENSE
 homepage:            https://github.com/composewell/streamly-lz4
@@ -15,6 +14,7 @@ build-type:          Simple
 
 extra-source-files:  CHANGELOG.md
                    , NOTICE
+                   , README.md
 
 source-repository head
   type: git
