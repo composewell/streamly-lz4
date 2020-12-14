@@ -9,9 +9,29 @@ let
                     then pkgs.haskellPackages
                     else pkgs.haskell.packages.${compiler};
 
+  mkPkgGit =
+    super: gitSrc: ref: name:
+    let src =
+          builtins.fetchGit {
+            url = gitSrc;
+            ref = ref;
+          };
+    in super.callCabal2nix name src {};
+
+  overiddenPackages =
+    haskellPackages.override {
+      overrides =
+        _: super: {
+          streamly =
+            let src = "https://github.com/composewell/streamly.git";
+                ref = "master";
+            in mkPkgGit super src ref "streamly";
+        };
+    };
+
   drv = inShell:
     let orig =
-          haskellPackages.callCabal2nixWithOptions "streamly-lz4" ./. c2nix {};
+          overiddenPackages.callCabal2nixWithOptions "streamly-lz4" ./. c2nix {};
     in if inShell
        then orig.overrideAttrs (oldAttrs: { src = null; })
        else orig;
