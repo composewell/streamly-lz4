@@ -3,3 +3,6 @@ Copyright 2020 Composewell Technologies and Contributors
 
 This product includes software developed at
 Composewell Technologies (http://www.composewell.com).
+
+All the files under the direcotry c/ are copied from the LZ4 library.
+The author for those files is Yann Collet (http://www.lz4.org).
