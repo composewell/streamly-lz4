@@ -25,6 +25,17 @@ import qualified Streamly.Internal.Data.Stream.StreamD as D
 import Streamly.Prelude
 
 --------------------------------------------------------------------------------
+-- CPP helpers
+--------------------------------------------------------------------------------
+
+-- Simple helpers for more informative inline statements.
+
+-- XXX FIXME
+-- #define INLINE_EARLY  INLINE [2]
+-- #define INLINE_NORMAL INLINE [1]
+-- #define INLINE_LATE   INLINE [0]
+
+--------------------------------------------------------------------------------
 -- Foreign
 --------------------------------------------------------------------------------
 
@@ -70,6 +81,7 @@ data CompressState st strm dict
     | CCleanup strm dict
 
 -- | See 'compress' for documentation.
+-- FIXME: {-# INLINE_NORMAL compressD #-}
 compressD ::
        MonadIO m
     => Int
@@ -104,6 +116,7 @@ compressD i0 (D.Stream step0 state0) = D.Stream step (CInit state0)
                                     <$> MA.shrinkToFit (MA.Array fbe bo1 en)
                             return arr1
 
+    -- FIXME: {-# INLINE_LATE step #-}
     step _ (CInit st) =
         liftIO
             $ do
