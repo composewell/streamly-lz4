@@ -39,7 +39,11 @@ test-suite test-lz4
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Main.hs
-  build-depends:       base >= 4.13 && <4.14
+  build-depends:       streamly-lz4
+                     , streamly
+                     , base       >= 4.13   && <4.14
+                     , QuickCheck >= 2.13.1 && < 2.14
+                     , hspec      >= 2.7    && < 2.8
   ghc-options:         -Wall
   default-language:    Haskell2010
 
