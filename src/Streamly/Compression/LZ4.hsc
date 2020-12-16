@@ -233,6 +233,7 @@ data ResizeState st arr
     = RInit st
     | RProcess st arr
     | RAccumlate st arr
+    | RYield arr (ResizeState st arr)
     | RDone
 
 -- | See 'resize' for documentation.
@@ -255,7 +256,7 @@ resizeD (D.Stream step0 state0) = D.Stream step (RInit state0)
                            peek (castPtr (b `plusPtr` 4) :: Ptr Word32)
                        let required = fromIntegral compressedSize + 8
                        if len == required
-                       then return $ D.Yield arr $ RInit st
+                       then return $ D.Skip $ RYield arr $ RInit st
                        else if len < required
                        then return $ D.Skip $ RAccumlate st arr
                        else do
@@ -263,10 +264,11 @@ resizeD (D.Stream step0 state0) = D.Stream step (RInit state0)
                                arr1 = A.Array fb arr1E
                                arr2S = fb `plusForeignPtr` required
                                arr2 = A.Array arr2S e
-                           return $ D.Yield arr1 $ RProcess st arr2
+                           return $ D.Skip $ RYield arr1 $ RProcess st arr2
 
     {-# INLINE [0] step #-}
     -- FIXME: {-# INLINE_LATE step #-}
+    step _ (RYield r next) = return $ D.Yield r next
     step gst (RInit st) = do
         r <- step0 gst st
         case r of
@@ -281,7 +283,7 @@ resizeD (D.Stream step0 state0) = D.Stream step (RInit state0)
                 arr1 <- A.spliceTwo buf arr
                 liftIO $ process st1 arr1
             D.Skip st1 -> return $ D.Skip $ RAccumlate st1 buf
-            D.Stop -> return $ D.Yield buf $ RDone
+            D.Stop -> return $ D.Skip $ RYield buf $ RDone
     step _ RDone = return D.Stop
 
 -- | This combinators resizes arrays to the required length. Every element of
