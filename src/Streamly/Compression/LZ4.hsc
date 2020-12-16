@@ -23,6 +23,7 @@ import Foreign.ForeignPtr (plusForeignPtr, withForeignPtr)
 import Foreign.Marshal (copyBytes, free, mallocBytes)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peek, poke)
+import Fusion.Plugin.Types (Fuse (..))
 
 import qualified Streamly.Internal.Data.Array.Storable.Foreign.Mut.Types as MA
 import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as A
@@ -136,6 +137,7 @@ debug m = D.fromStreamD (debugD (D.toStreamD m))
 -- Compression
 --------------------------------------------------------------------------------
 
+{-# ANN type CompressState Fuse #-}
 data CompressState st strm dict
     = CInit st
     | CProcess st strm dict
@@ -155,7 +157,16 @@ compressD i0 (D.Stream step0 state0) = D.Stream step (CInit state0)
 
     i = fromIntegral $ max i0 0
 
-    {-# INLINE compressChunk #-}
+    -- Having NOINLINE here does not effect the performance a lot. Every
+    -- iteration of the loop is a little slower (< 1us) but the entire loop
+    -- fuses.
+    -- On a stream with 404739 elements of 10 bytes each,
+    -- With NOINLINE: 96.14 ms
+    -- With INLINE:   81.07 ms
+    --
+    -- With INLINE statement and the usage of fusion-plugin results in an
+    -- enormous code size when used with other combinators.
+    {-# NOINLINE compressChunk #-}
     compressChunk arr@(A.Array fb _) strm dict = do
         withForeignPtr fb
             $ \b -> do
@@ -217,6 +228,7 @@ compress i m = D.fromStreamD (compressD i (D.toStreamD m))
 -- Decompression
 --------------------------------------------------------------------------------
 
+{-# ANN type ResizeState Fuse #-}
 data ResizeState st arr
     = RInit st
     | RProcess st arr
@@ -280,6 +292,7 @@ resizeD (D.Stream step0 state0) = D.Stream step (RInit state0)
 resize :: MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
 resize m = D.fromStreamD (resizeD (D.toStreamD m))
 
+{-# ANN type DecompressState Fuse #-}
 data DecompressState buf st dict dsize
     = DInit st
     | DProcess st dict dsize
@@ -295,7 +308,13 @@ decompressResizedD (D.Stream step0 state0) = D.Stream step (DInit state0)
 
    where
 
-    {-# INLINE decompressChunk #-}
+    -- Having NOINLINE here does not effect the performance a lot. Every
+    -- iteration of the loop is a little slower (< 1us) but the entire loop
+    -- fuses.
+    --
+    -- With INLINE statement and the usage of fusion-plugin results in an
+    -- enormous code size when used with other combinators.
+    {-# NOINLINE decompressChunk #-}
     decompressChunk (A.Array fb _) dict dsize = do
         withForeignPtr fb
             $ \b -> do
