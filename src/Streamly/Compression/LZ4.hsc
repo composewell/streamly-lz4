@@ -114,6 +114,13 @@ compressD i0 (D.Stream step0 state0) = D.Stream step (CInit state0)
                             arr1 <-
                                 A.unsafeFreeze
                                     <$> MA.shrinkToFit (MA.Array fbe bo1 en)
+                            {-
+                            putStrLn $
+                                "COMPRESSION: decompressed size="
+                                    ++ show clen
+                                    ++ ", compressed size="
+                                    ++ show size
+                            -}
                             return arr1
 
     -- FIXME: {-# INLINE_LATE step #-}
@@ -223,6 +230,13 @@ decompressResizedD (D.Stream step0 state0) = D.Stream step (DInit state0)
                             arr1 <-
                                 A.unsafeFreeze
                                     <$> MA.shrinkToFit (MA.Array fbe bo1 en)
+                            {-
+                            putStrLn $
+                                "DECOMPRESSION: decompressed size="
+                                    ++ show decompressedSize
+                                    ++ ", compressed size="
+                                    ++ show compressedSize
+                            -}
                             return (arr1, dsize1)
 
     -- FIXME: {-# INLINE_LATE step #-}
