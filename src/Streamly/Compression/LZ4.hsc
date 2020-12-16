@@ -244,10 +244,9 @@ decompressResizedD (D.Stream step0 state0) = D.Stream step (DInit state0)
 
 -- | See 'decompress' for documentation.
 --
--- /Unimplemented/
 decompressD ::
        MonadIO m => D.Stream m (A.Array Word8) -> D.Stream m (A.Array Word8)
-decompressD = error "Unimplemented"
+decompressD = decompressResizedD . resizeD
 
 -- | Decompress a stream of arrays compressed using LZ4 stream compression.
 decompress :: MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
