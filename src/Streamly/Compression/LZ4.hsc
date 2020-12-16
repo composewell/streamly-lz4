@@ -7,6 +7,8 @@ module Streamly.Compression.LZ4
     , compress
     , decompressResized
     , decompress
+    , debugD
+    , debug
     ) where
 
 --------------------------------------------------------------------------------
@@ -72,6 +74,60 @@ foreign import ccall unsafe "lz4.h LZ4_saveDict"
 foreign import ccall unsafe "lz4.h LZ4_decompress_safe_usingDict"
     c_decompressSafeUsingDict
         :: CString -> Ptr Word8 -> CInt -> CInt -> Ptr Word8 -> CInt -> IO CInt
+
+--------------------------------------------------------------------------------
+-- Debugging
+--------------------------------------------------------------------------------
+
+-- | See 'debug' for documentation.
+-- FIXME: {-# INLINE_NORMAL debugD #-}
+debugD :: MonadIO m => D.Stream m (A.Array Word8) -> D.Stream m (A.Array Word8)
+debugD (D.Stream step0 state0) = D.Stream step (0 :: Int, state0)
+
+    where
+
+    {-# INLINE putDivider #-}
+    putDivider = putStrLn "---------------------------------"
+
+    {-# INLINE debugger #-}
+    debugger i arr@(A.Array fb _) = do
+        let len = A.byteLength arr
+        if len <= 8
+        then do
+            putDivider
+            putStrLn $ "Index  : " ++ show i
+            putStrLn $ "Length : " ++ show len
+            putStrLn $ "Size info isn't available"
+        else withForeignPtr fb
+                 $ \b -> do
+                       decompressedSize <- peek (castPtr b :: Ptr Word32)
+                       compressedSize <-
+                           peek (castPtr (b `plusPtr` 4) :: Ptr Word32)
+                       putDivider
+                       putStrLn $ "Index        : " ++ show i
+                       putStrLn $ "Length       : " ++ show len
+                       putStrLn $ "Compressed   : " ++ show compressedSize
+                       putStrLn $ "Decompressed : " ++ show decompressedSize
+
+    -- FIXME: {-# INLINE_LATE step #-}
+    step gst (i, st) = do
+        r <- step0 gst st
+        case r of
+            D.Yield arr st1 -> do
+                liftIO $ debugger i arr
+                return $ D.Yield arr (i + 1, st1)
+            D.Skip st1 -> return $ D.Skip $ (i, st1)
+            D.Stop -> do
+                liftIO putDivider
+                return $ D.Stop
+
+-- | A simple combinator that prints the index, length, compressed size and
+-- decompressed size of each array element to standard output.
+--
+-- This only works on stream of resized arrays.
+--
+debug :: MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
+debug m = D.fromStreamD (debugD (D.toStreamD m))
 
 --------------------------------------------------------------------------------
 -- Compression
