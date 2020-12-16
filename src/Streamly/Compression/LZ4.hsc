@@ -80,6 +80,7 @@ foreign import ccall unsafe "lz4.h LZ4_decompress_safe_usingDict"
 --------------------------------------------------------------------------------
 
 -- | See 'debug' for documentation.
+{-# INLINE [1] debugD #-}
 -- FIXME: {-# INLINE_NORMAL debugD #-}
 debugD :: MonadIO m => D.Stream m (A.Array Word8) -> D.Stream m (A.Array Word8)
 debugD (D.Stream step0 state0) = D.Stream step (0 :: Int, state0)
@@ -109,6 +110,7 @@ debugD (D.Stream step0 state0) = D.Stream step (0 :: Int, state0)
                        putStrLn $ "Compressed   : " ++ show compressedSize
                        putStrLn $ "Decompressed : " ++ show decompressedSize
 
+    {-# INLINE [0] step #-}
     -- FIXME: {-# INLINE_LATE step #-}
     step gst (i, st) = do
         r <- step0 gst st
@@ -126,6 +128,7 @@ debugD (D.Stream step0 state0) = D.Stream step (0 :: Int, state0)
 --
 -- This only works on stream of resized arrays.
 --
+{-# INLINE debug #-}
 debug :: MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
 debug m = D.fromStreamD (debugD (D.toStreamD m))
 
@@ -139,6 +142,7 @@ data CompressState st strm dict
     | CCleanup strm dict
 
 -- | See 'compress' for documentation.
+{-# INLINE [1] compressD #-}
 -- FIXME: {-# INLINE_NORMAL compressD #-}
 compressD ::
        MonadIO m
@@ -174,6 +178,7 @@ compressD i0 (D.Stream step0 state0) = D.Stream step (CInit state0)
                                     <$> MA.shrinkToFit (MA.Array fbe bo1 en)
                             return arr1
 
+    {-# INLINE [0] step #-}
     -- FIXME: {-# INLINE_LATE step #-}
     step _ (CInit st) =
         liftIO
@@ -200,6 +205,7 @@ compressD i0 (D.Stream step0 state0) = D.Stream step (CInit state0)
 -- As the acceleration increases, the compression speed increases whereas the
 -- compression ratio decreases.
 --
+{-# INLINE compress #-}
 compress ::
        MonadIO m
     => Int
@@ -219,6 +225,8 @@ data ResizeState st arr
 
 -- | See 'resize' for documentation.
 --
+{-# INLINE [1] resizeD #-}
+-- FIXME: {-# INLINE_NORMAL resizeD #-}
 resizeD :: MonadIO m => D.Stream m (A.Array Word8) -> D.Stream m (A.Array Word8)
 resizeD (D.Stream step0 state0) = D.Stream step (RInit state0)
 
@@ -245,6 +253,8 @@ resizeD (D.Stream step0 state0) = D.Stream step (RInit state0)
                                arr2 = A.Array arr2S e
                            return $ D.Yield arr1 $ RProcess st arr2
 
+    {-# INLINE [0] step #-}
+    -- FIXME: {-# INLINE_LATE step #-}
     step gst (RInit st) = do
         r <- step0 gst st
         case r of
@@ -266,6 +276,7 @@ resizeD (D.Stream step0 state0) = D.Stream step (RInit state0)
 -- the resulting stream will be a proper compressed element with 8 bytes of meta
 -- data prefixed to it.
 --
+{-# INLINE resize #-}
 resize :: MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
 resize m = D.fromStreamD (resizeD (D.toStreamD m))
 
@@ -276,6 +287,8 @@ data DecompressState buf st dict dsize
 
 -- | See 'decompressResized' for documentation.
 --
+{-# INLINE [1] decompressResizedD #-}
+-- FIXME: {-# INLINE_NORMAL decompressResizedD #-}
 decompressResizedD ::
        MonadIO m => D.Stream m (A.Array Word8) -> D.Stream m (A.Array Word8)
 decompressResizedD (D.Stream step0 state0) = D.Stream step (DInit state0)
@@ -307,6 +320,7 @@ decompressResizedD (D.Stream step0 state0) = D.Stream step (DInit state0)
                                     <$> MA.shrinkToFit (MA.Array fbe bo1 en)
                             return (arr1, dsize1)
 
+    {-# INLINE [0] step #-}
     -- FIXME: {-# INLINE_LATE step #-}
     step _ (DInit st) =
         liftIO
@@ -326,6 +340,7 @@ decompressResizedD (D.Stream step0 state0) = D.Stream step (DInit state0)
 
 -- | See 'decompress' for documentation.
 --
+{-# INLINE decompressD #-}
 decompressD ::
        MonadIO m => D.Stream m (A.Array Word8) -> D.Stream m (A.Array Word8)
 decompressD = decompressResizedD . resizeD
@@ -337,11 +352,13 @@ decompressD = decompressResizedD . resizeD
 -- but a random compressed stream should first be resized properly  with
 -- 'resizeD'.
 --
+{-# INLINE decompressResized #-}
 decompressResized ::
        MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
 decompressResized m = D.fromStreamD (decompressResizedD (D.toStreamD m))
 
 -- | Decompress a stream of arrays compressed using LZ4 stream compression.
+{-# INLINE decompress #-}
 decompress ::
        MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
 decompress m = D.fromStreamD (decompressD (D.toStreamD m))
