@@ -1,6 +1,7 @@
 module Streamly.Compression.LZ4
     ( compressD
     , resizeD
+    , resize
     , decompressResizedD
     , decompressD
     , compress
@@ -16,7 +17,7 @@ import Control.Monad (void)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Word (Word32, Word8)
 import Foreign.C (CInt(..), CString)
-import Foreign.ForeignPtr (withForeignPtr)
+import Foreign.ForeignPtr (plusForeignPtr, withForeignPtr)
 import Foreign.Marshal (copyBytes, free, mallocBytes)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peek, poke)
@@ -161,34 +162,63 @@ compress i m = D.fromStreamD (compressD i (D.toStreamD m))
 -- Decompression
 --------------------------------------------------------------------------------
 
+data ResizeState st arr
+    = RInit st
+    | RProcess st arr
+    | RAccumlate st arr
+    | RDone
+
+-- | See 'resize' for documentation.
+--
+resizeD :: MonadIO m => D.Stream m (A.Array Word8) -> D.Stream m (A.Array Word8)
+resizeD (D.Stream step0 state0) = D.Stream step (RInit state0)
+
+    where
+
+    {-# INLINE process #-}
+    process st arr@(A.Array fb e) = do
+        let len = A.byteLength arr
+        if len <= 8
+        then return $ D.Skip $ RAccumlate st arr
+        else withForeignPtr fb
+                 $ \b -> do
+                       compressedSize <-
+                           peek (castPtr (b `plusPtr` 4) :: Ptr Word32)
+                       let required = fromIntegral compressedSize + 8
+                       if len == required
+                       then return $ D.Yield arr $ RInit st
+                       else if len < required
+                       then return $ D.Skip $ RAccumlate st arr
+                       else do
+                           let arr1E = b `plusPtr` required
+                               arr1 = A.Array fb arr1E
+                               arr2S = fb `plusForeignPtr` required
+                               arr2 = A.Array arr2S e
+                           return $ D.Yield arr1 $ RProcess st arr2
+
+    step gst (RInit st) = do
+        r <- step0 gst st
+        case r of
+            D.Yield arr st1 -> liftIO $ process st1 arr
+            D.Skip st1 -> return $ D.Skip $ RInit st1
+            D.Stop -> return D.Stop
+    step _ (RProcess st arr) = liftIO $ process st arr
+    step gst (RAccumlate st buf) = do
+        r <- step0 gst st
+        case r of
+            D.Yield arr st1 -> do
+                arr1 <- A.spliceTwo buf arr
+                liftIO $ process st1 arr1
+            D.Skip st1 -> return $ D.Skip $ RAccumlate st1 buf
+            D.Stop -> return $ D.Yield buf $ RDone
+    step _ RDone = return D.Stop
+
 -- | This combinators resizes arrays to the required length. Every element of
 -- the resulting stream will be a proper compressed element with 8 bytes of meta
 -- data prefixed to it.
 --
--- /Unimplemented/
-resizeD :: D.Stream m (A.Array Word8) -> D.Stream m (A.Array Word8)
-resizeD = error "Unimplemented"
-{-
--- XXX incomplete code
-    isDecompressable arr@(A.Array fb _) buf dict =
-        withForeignPtr fb
-            $ \b -> do
-                let len = A.byteLength arr
-                if len >= 8
-                then do
-                    decompresedSize <- peek (castPtr b :: Ptr Word32)
-                    compressedSize <-
-                        peek (castPtr (b `plusPtr` 4) :: Ptr Word32)
-                    let required = compressedSize + 8
-                        remaining = len - required
-                        compressedChunk = A.Array
-                    if len >= required
-                    then if remaining > 0
-                         then undefined
-                         else undefined
-                    else undefiend
-                else undefined
--}
+resize :: MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
+resize m = D.fromStreamD (resizeD (D.toStreamD m))
 
 data DecompressState buf st dict dsize
     = DInit st
