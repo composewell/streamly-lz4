@@ -58,57 +58,70 @@ benchCorpus n f c =
             S.unfold H.readChunksWithBufferOf (50, h) & c & S.drain
             hClose h
 
+-- You can compare this directly with LZ4 CLI
+{-# INLINE benchCorpusWrite #-}
+benchCorpusWrite :: String -> (String -> String) -> Combinator -> Benchmark
+benchCorpusWrite n f c =
+    bench (f (n ++ " : "))
+        $ nfIO
+        $ do
+            base <- getCurrentDirectory
+            let corpora = base ++ "/corpora/"
+            r <- openFile (f corpora) ReadMode
+            w <- openFile "/dev/null" WriteMode
+            S.unfold H.readChunksWithBufferOf (50, r) & c & H.fromChunks w
+            hClose r
+            hClose w
+
 --------------------------------------------------------------------------------
 -- Benchmarks
 --------------------------------------------------------------------------------
 
 {-# INLINE compress #-}
-compress :: (String -> String) -> Benchmark
-compress f = benchCorpus "compress 5" f (Z.compress 5)
+compress :: Int -> (String -> String) -> Benchmark
+compress i f = benchCorpus ("compress " ++ show i) f (Z.compress i)
+
+{-# INLINE compressWrite #-}
+compressWrite :: Int -> (String -> String) -> Benchmark
+compressWrite i f =
+    benchCorpusWrite ("compress (read & write) " ++ show i) f (Z.compress i)
 
 {-# INLINE decompressResizedCompress #-}
-decompressResizedCompress :: (String -> String) -> Benchmark
-decompressResizedCompress f =
-    benchCorpus "decompressResized . compress 5" f
-        (Z.decompressResized . Z.compress 5)
+decompressResizedCompress :: Int -> (String -> String) -> Benchmark
+decompressResizedCompress i f =
+    benchCorpus ("decompressResized . compress " ++ show i) f
+        (Z.decompressResized . Z.compress i)
 
 {-# INLINE decompressCompress #-}
-decompressCompress :: (String -> String) -> Benchmark
-decompressCompress f =
-    benchCorpus "decompress . compress 5" f (Z.decompress . Z.compress 5)
+decompressCompress :: Int -> (String -> String) -> Benchmark
+decompressCompress i f =
+    benchCorpus ("decompress . compress " ++ show i) f
+        (Z.decompress . Z.compress i)
 
 --------------------------------------------------------------------------------
 -- Main
 --------------------------------------------------------------------------------
 
 main :: IO ()
-main =
-    defaultMain
-        [ bgroup
-              "Cantrbry"
-              [ compress cantrbry_alice29_txt
-              , compress cantrbry_kennedy_xls
-              , decompressResizedCompress cantrbry_alice29_txt
-              , decompressResizedCompress cantrbry_kennedy_xls
-              , decompressCompress cantrbry_alice29_txt
-              , decompressCompress cantrbry_kennedy_xls
-              ]
-        , bgroup
-              "Large"
-              [ compress large_world192_txt
-              , compress large_bible_txt
-              , decompressResizedCompress large_world192_txt
-              , decompressResizedCompress large_bible_txt
-              , decompressCompress large_world192_txt
-              , decompressCompress large_bible_txt
-              ]
-        , bgroup
-              "Artificl"
-              [ compress artificl_aaa_txt
-              , compress artificl_random_txt
-              , decompressResizedCompress artificl_aaa_txt
-              , decompressResizedCompress artificl_random_txt
-              , decompressCompress artificl_aaa_txt
-              , decompressCompress artificl_random_txt
-              ]
-        ]
+main = defaultMain [perfGroup 1, perfGroup 12]
+
+    where
+
+    perfGroup i =
+        bgroup ("i == " ++ show i)
+            $ do
+                func <-
+                    [ compress
+                    , compressWrite
+                    , decompressResizedCompress
+                    , decompressCompress
+                    ]
+                gen <-
+                    [ cantrbry_alice29_txt
+                    , cantrbry_kennedy_xls
+                    , artificl_aaa_txt
+                    , artificl_random_txt
+                    , large_bible_txt
+                    , large_world192_txt
+                    ]
+                return $ func i gen
