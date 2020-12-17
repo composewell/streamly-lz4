@@ -116,7 +116,7 @@ debugD (D.Stream step0 state0) = D.Stream step (0 :: Int, state0)
             putDivider
             putStrLn $ "Index  : " ++ show i
             putStrLn $ "Length : " ++ show len
-            putStrLn $ "Size info isn't available"
+            putStrLn "Size info isn't available"
         else withForeignPtr fb
                  $ \b -> do
                        decompressedSize <- peek (castPtr b :: Ptr Word32)
@@ -136,10 +136,10 @@ debugD (D.Stream step0 state0) = D.Stream step (0 :: Int, state0)
             D.Yield arr st1 -> do
                 liftIO $ debugger i arr
                 return $ D.Yield arr (i + 1, st1)
-            D.Skip st1 -> return $ D.Skip $ (i, st1)
+            D.Skip st1 -> return $ D.Skip (i, st1)
             D.Stop -> do
                 liftIO putDivider
-                return $ D.Stop
+                return D.Stop
 
 -- | A simple combinator that prints the index, length, compressed size and
 -- decompressed size of each array element to standard output.
@@ -201,10 +201,8 @@ compressD i0 (D.Stream step0 state0) = D.Stream step (CInit state0)
                             poke cbe (fromIntegral clen :: Word32)
                             poke (cbe `plusPtr` 4) (fromIntegral size :: Word32)
                             let bo1 = be `plusPtr` (fromIntegral size + 8)
-                            arr1 <-
-                                A.unsafeFreeze
-                                    <$> MA.shrinkToFit (MA.Array fbe bo1 en)
-                            return arr1
+                            A.unsafeFreeze
+                                <$> MA.shrinkToFit (MA.Array fbe bo1 en)
 
     {-# INLINE [0] step #-}
     -- FIXME: {-# INLINE_LATE step #-}
@@ -284,7 +282,7 @@ resizeD (D.Stream step0 state0) = D.Stream step (RInit state0)
                 arr1 <- A.spliceTwo buf arr
                 liftIO $ process st1 arr1
             D.Skip st1 -> return $ D.Skip $ RAccumlate st1 buf
-            D.Stop -> return $ D.Skip $ RYield buf $ RDone
+            D.Stop -> return $ D.Skip $ RYield buf RDone
     step _ RDone = return D.Stop
 
 {-# ANN type DecompressState Fuse #-}
@@ -328,7 +326,7 @@ decompressResizedD (D.Stream step0 state0) = D.Stream step (DInit state0)
                                             dict dsize
                             copyBytes
                                 dict be (min (fromIntegral dsize1) (64 * 1024))
-                            let bo1 = be `plusPtr` (fromIntegral dsize1)
+                            let bo1 = be `plusPtr` fromIntegral dsize1
                             arr1 <-
                                 A.unsafeFreeze
                                     <$> MA.shrinkToFit (MA.Array fbe bo1 en)
