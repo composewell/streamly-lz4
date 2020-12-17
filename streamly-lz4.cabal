@@ -41,7 +41,8 @@ library
   hs-source-dirs:      src
   include-dirs:        c
   c-sources:           c/lz4.c, c/lz4.h
-  exposed-modules:     Streamly.Compression.LZ4
+  exposed-modules:     Streamly.LZ4
+                     , Streamly.Internal.LZ4
   build-depends:       base                >= 4.13 && < 4.14
                      , fusion-plugin-types >= 0.1  && < 0.2
                      , streamly
