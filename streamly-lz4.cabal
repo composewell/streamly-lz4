@@ -13,10 +13,15 @@ category:            Codec, Compression, Streamly
 build-type:          Simple
 
 extra-source-files:  CHANGELOG.md
+                   , .gitignore
                    , NOTICE
                    , README.md
-                   , c/lz4.c
-                   , c/lz4.h
+                   , cabal.project
+                   , stack.yaml
+                   , .github/workflows/haskell.yml
+                   , appveyor.yml
+                   , default.nix
+                   , download-corpora.sh
 
 source-repository head
   type: git

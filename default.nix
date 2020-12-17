@@ -24,11 +24,11 @@ let
         _: super: {
           streamly =
             let src = "https://github.com/composewell/streamly.git";
-                ref = "master";
+                ref = "9fefed37d5da5aa103f93ded65b1335903651e26";
             in mkPkgGit super src ref "streamly";
           fusion-plugin =
             let src = "https://github.com/composewell/fusion-plugin";
-                ref = "master";
+                ref = "1ad15ebf56a91ec967c48f7e5620f74131a947ab";
             in mkPkgGit super src ref "fusion-plugin";
         };
     };
