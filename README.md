@@ -59,9 +59,9 @@ extra-deps:
 ...
 ```
 
-## Running the tests and benchmarks
+## Running benchmarks
 
-Tests and benchmarks use corpora provided by the canterbury corpus
+Benchmarks use corpora provided by the canterbury corpus
 <https://corpus.canterbury.ac.nz/>
 
 `download-corpora.sh` automatically downloads and unpacks all the required
