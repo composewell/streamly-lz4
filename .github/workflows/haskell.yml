@@ -41,7 +41,7 @@ jobs:
       fail-fast: false
       matrix:
         name:
-          [ Ubuntu+GHC822, Ubuntu+GHC844, Ubuntu+GHC865
+          [ Ubuntu+GHC822, Ubuntu+GHC844, Ubuntu+GHC865+fusion-plugin
           , Ubuntu+GHC884, Ubuntu+GHC8102
           , MacOS+GHC884
           , Hlint ]
@@ -56,8 +56,9 @@ jobs:
             ghc_version: 8.4.4
             runner: ubuntu-latest
 
-          - name: Ubuntu+GHC865
+          - name: Ubuntu+GHC865+fusion-plugin
             ghc_version: 8.6.5
+            pack_options: CABAL_BUILD_OPTIONS="-f fusion-plugin"
             runner: ubuntu-latest
 
           - name: Ubuntu+GHC884

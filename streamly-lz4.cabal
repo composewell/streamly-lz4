@@ -23,6 +23,11 @@ extra-source-files:  CHANGELOG.md
                    , default.nix
                    , download-corpora.sh
 
+flag fusion-plugin
+  description: Use fusion plugin for benchmarks and executables
+  manual: True
+  default: False
+
 source-repository head
   type: git
   location: https://github.com/composewell/streamly-lz4
@@ -35,9 +40,9 @@ common optimization-options
 
 common exe-options
   import: optimization-options
-  ghc-options: -fplugin Fusion.Plugin
-  build-depends:
-    fusion-plugin >= 0.2 && < 0.3
+  if flag(fusion-plugin) && !impl(ghc < 8.6)
+    ghc-options:       -fplugin Fusion.Plugin
+    build-depends:     fusion-plugin >= 0.2 && < 0.3
 
 library
   import:              optimization-options

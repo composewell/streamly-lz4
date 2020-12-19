@@ -12,14 +12,9 @@ To read more about LZ4 go to <https://github.com/lz4/lz4>
 This library comes with a `default.nix` which can be used to setup the
 environment. Using `default.nix` is highly recommended.
 
-Currently, `streamly` and `fusion-plugin` are pulled from the latest
-commits. Until newer versions are released, this package cannot be released on
-hackage.
-
-| Package       | Revision                                 |
-| ------------- | ---------------------------------------- |
-| streamly      | 9fefed37d5da5aa103f93ded65b1335903651e26 |
-| fusion-plugin | 1ad15ebf56a91ec967c48f7e5620f74131a947ab |
+Currently, `streamly` is pulled from master at
+`9fefed37d5da5aa103f93ded65b1335903651e26`. Until a newer version is released,
+this package cannot be released on hackage.
 
 To install this package properly, you might need add the following to your
 `cabal.project` file,
@@ -30,11 +25,6 @@ source-repository-package
     type: git
     location: https://github.com/composewell/streamly
     tag: 9fefed37d5da5aa103f93ded65b1335903651e26
-
-source-repository-package
-    type: git
-    location: https://github.com/composewell/fusion-plugin
-    tag: 1ad15ebf56a91ec967c48f7e5620f74131a947ab
 
 source-repository-package
     type: git
@@ -51,8 +41,6 @@ If you're using stack then you'll need to add these packages to your `extra-deps
 extra-deps:
 - github: composewell/streamly
   commit: 9fefed37d5da5aa103f93ded65b1335903651e26
-- github: composewell/fusion-plugin
-  commit: 1ad15ebf56a91ec967c48f7e5620f74131a947ab
 - github: composewell/streamly-lz4
   commit: <latest commit of streamly-lz4>
 
@@ -71,3 +59,6 @@ You need to run it from the top level directory like so,
 ```
 $ ./download-corpora.sh
 ```
+
+You can use `-f fusion-plugin` to build benchmarks with the
+[fusion-plugin](https://github.com/composewell/fusion-plugin).
