@@ -47,21 +47,21 @@ artificl_aaa_txt base = base ++ "artificl/aaa.txt"
 type Combinator = S.SerialT IO (A.Array Word8) -> S.SerialT IO (A.Array Word8)
 
 {-# INLINE benchCorpus #-}
-benchCorpus :: String -> (String -> String) -> Combinator -> Benchmark
-benchCorpus n f c =
+benchCorpus :: Int -> String -> (String -> String) -> Combinator -> Benchmark
+benchCorpus buf n f c =
     bench (f (n ++ " : "))
         $ nfIO
         $ do
             base <- getCurrentDirectory
             let corpora = base ++ "/corpora/"
             h <- openFile (f corpora) ReadMode
-            S.unfold H.readChunksWithBufferOf (50, h) & c & S.drain
+            S.unfold H.readChunksWithBufferOf (buf, h) & c & S.drain
             hClose h
 
 -- You can compare this directly with LZ4 CLI
 {-# INLINE benchCorpusWrite #-}
-benchCorpusWrite :: String -> (String -> String) -> Combinator -> Benchmark
-benchCorpusWrite n f c =
+benchCorpusWrite :: Int -> String -> (String -> String) -> Combinator -> Benchmark
+benchCorpusWrite buf n f c =
     bench (f (n ++ " : "))
         $ nfIO
         $ do
@@ -69,7 +69,7 @@ benchCorpusWrite n f c =
             let corpora = base ++ "/corpora/"
             r <- openFile (f corpora) ReadMode
             w <- openFile "/dev/null" WriteMode
-            S.unfold H.readChunksWithBufferOf (50, r) & c & H.fromChunks w
+            S.unfold H.readChunksWithBufferOf (buf, r) & c & H.fromChunks w
             hClose r
             hClose w
 
@@ -78,24 +78,25 @@ benchCorpusWrite n f c =
 --------------------------------------------------------------------------------
 
 {-# INLINE compress #-}
-compress :: Int -> (String -> String) -> Benchmark
-compress i f = benchCorpus ("compress " ++ show i) f (Z.compress i)
+compress :: Int -> Int -> (String -> String) -> Benchmark
+compress buf i f = benchCorpus buf ("compress " ++ show buf) f (Z.compress i)
 
 {-# INLINE compressWrite #-}
-compressWrite :: Int -> (String -> String) -> Benchmark
-compressWrite i f =
-    benchCorpusWrite ("compress (read & write) " ++ show i) f (Z.compress i)
+compressWrite :: Int -> Int -> (String -> String) -> Benchmark
+compressWrite buf i f =
+    benchCorpusWrite
+        buf ("compress (read & write) " ++ show buf) f (Z.compress i)
 
 {-# INLINE decompressResizedCompress #-}
-decompressResizedCompress :: Int -> (String -> String) -> Benchmark
-decompressResizedCompress i f =
-    benchCorpus ("decompressResized . compress " ++ show i) f
+decompressResizedCompress :: Int -> Int -> (String -> String) -> Benchmark
+decompressResizedCompress buf i f =
+    benchCorpus buf ("decompressResized64 . compress " ++ show buf) f
         (Z.decompressResized . Z.compress i)
 
 {-# INLINE decompressCompress #-}
-decompressCompress :: Int -> (String -> String) -> Benchmark
-decompressCompress i f =
-    benchCorpus ("decompress . compress " ++ show i) f
+decompressCompress :: Int -> Int -> (String -> String) -> Benchmark
+decompressCompress buf i f =
+    benchCorpus buf ("decompress64 . compress " ++ show buf) f
         (Z.decompress . Z.compress i)
 
 --------------------------------------------------------------------------------
@@ -108,7 +109,7 @@ main = defaultMain [perfGroup 1, perfGroup 12]
     where
 
     perfGroup i =
-        bgroup ("i == " ++ show i)
+        bgroup ("i" ++ show i)
             $ do
                 func <-
                     [ compress
@@ -116,6 +117,7 @@ main = defaultMain [perfGroup 1, perfGroup 12]
                     , decompressResizedCompress
                     , decompressCompress
                     ]
+                buf <- [64, 32000]
                 gen <-
                     [ cantrbry_alice29_txt
                     , cantrbry_kennedy_xls
@@ -124,4 +126,4 @@ main = defaultMain [perfGroup 1, perfGroup 12]
                     , large_bible_txt
                     , large_world192_txt
                     ]
-                return $ func i gen
+                return $ func buf i gen
