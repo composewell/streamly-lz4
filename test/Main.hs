@@ -21,7 +21,7 @@ import qualified Streamly.Internal.Memory.ArrayStream as ArrayStream
 import Streamly.LZ4
 
 genArrayW8List :: Gen [Array.Array Word8]
-genArrayW8List = listOf $ Array.fromList <$> listOf chooseAny
+genArrayW8List = listOf $ Array.fromList <$> listOf (elements [0,1])
 
 genArrayW8ListLarge :: Gen [Array.Array Word8]
 genArrayW8ListLarge = do
@@ -31,7 +31,7 @@ genArrayW8ListLarge = do
         maxVec = 100
     arrS <- choose (minArr, maxArr)
     vecS <- choose (minVec, maxVec)
-    let arrGen = Array.fromList <$> vectorOf arrS chooseAny
+    let arrGen = Array.fromList <$> vectorOf arrS (elements [0,1])
     vectorOf vecS arrGen
 
 genAcceleration :: Gen Int
