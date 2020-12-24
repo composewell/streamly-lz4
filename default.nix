@@ -1,3 +1,4 @@
+# nix-shell --argstr c2nix "--benchmark --flag fusion-plugin"
 { nixpkgs ? import <nixpkgs> {}
 , compiler ? "default"
 , c2nix ? "--benchmark" }:
