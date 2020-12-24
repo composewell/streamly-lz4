@@ -177,6 +177,9 @@ data CompressState st ctx dict
     | CompressDo st ctx dict
     | CompressDone ctx dict
 
+-- 64KB blocks are optimal as the dictionary max size is 64KB. We can rechunk
+-- the stream into 64KB blocks before compression.
+--
 -- | See 'compress' for documentation.
 {-# INLINE [1] compressD #-}
 -- FIXME: {-# INLINE_NORMAL compressD #-}
@@ -207,7 +210,10 @@ compressD i0 (Stream.Stream step0 state0) =
             $ \src -> do
                   let srcLen = fromIntegral $ Array.byteLength arr
                   maxCLen <- c_compressBound srcLen
-                  -- allocate compressed block with 8 byte header
+                  -- allocate compressed block with 8 byte header.  First 4
+                  -- bytes of the header store the length of the uncompressed
+                  -- data and the next 4 bytes store the length of the
+                  -- compressed data.
                   (MArray.Array fptr dstBegin dstMax) <-
                         MArray.newArray (fromIntegral maxCLen + 8)
                   let hdrSrcLen :: Ptr Word32 = castPtr dstBegin
@@ -229,6 +235,11 @@ compressD i0 (Stream.Stream step0 state0) =
         liftIO
             $ do
                 lz4Ctx <- c_createStream
+                -- Instead of using an external dictionary we could just hold
+                -- the previous chunks. However, the dictionary is only 64KB,
+                -- if the chunk size is bigger we would be holding a lot more
+                -- data than required. Also, the perf advantage does not seem
+                -- much.
                 dict <- mallocBytes (64 * 1024) :: IO CString
                 return $ Stream.Skip $ CompressDo st lz4Ctx dict
     step gst (CompressDo st lz4Ctx dict) = do
