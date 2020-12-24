@@ -98,9 +98,6 @@ foreign import ccall unsafe "lz4.h LZ4_compress_fast_continue"
         -> CInt
         -> IO CInt
 
-foreign import ccall unsafe "lz4.h LZ4_saveDict"
-    c_saveDict :: Ptr C_LZ4Stream -> CString -> CInt -> IO CInt
-
 foreign import ccall unsafe "lz4.h LZ4_decompress_safe_usingDict"
     c_decompressSafeUsingDict
         :: CString -> Ptr Word8 -> CInt -> CInt -> Ptr Word8 -> CInt -> IO CInt
@@ -170,10 +167,10 @@ debug m = Stream.fromStreamD (debugD (Stream.toStreamD m))
 --------------------------------------------------------------------------------
 
 {-# ANN type CompressState Fuse #-}
-data CompressState st ctx dict
+data CompressState st ctx prev
     = CompressInit st
-    | CompressDo st ctx dict
-    | CompressDone ctx dict
+    | CompressDo st ctx prev
+    | CompressDone ctx
 
 -- 64KB blocks are optimal as the dictionary max size is 64KB. We can rechunk
 -- the stream into 64KB blocks before compression.
@@ -203,7 +200,7 @@ compressD i0 (Stream.Stream step0 state0) =
     -- With INLINE statement and the usage of fusion-plugin results in an
     -- enormous code size when used with other combinators.
     {-# NOINLINE compressChunk #-}
-    compressChunk arr lz4Ctx dict = do
+    compressChunk arr lz4Ctx = do
         Array.asPtr arr
             $ \src -> do
                   let srcLen = fromIntegral $ Array.byteLength arr
@@ -220,7 +217,6 @@ compressD i0 (Stream.Stream step0 state0) =
                   compLen <-
                        c_compressFastContinue
                               lz4Ctx src compData srcLen maxCLen i
-                  void $ c_saveDict lz4Ctx dict (64 * 1024)
                   poke hdrSrcLen (fromIntegral srcLen)
                   poke hdrCompLen (fromIntegral compLen)
                   let dstEnd = dstBegin `plusPtr` (fromIntegral compLen + 8)
@@ -238,19 +234,19 @@ compressD i0 (Stream.Stream step0 state0) =
                 -- if the chunk size is bigger we would be holding a lot more
                 -- data than required. Also, the perf advantage does not seem
                 -- much.
-                dict <- mallocBytes (64 * 1024) :: IO CString
-                return $ Stream.Skip $ CompressDo st lz4Ctx dict
-    step gst (CompressDo st lz4Ctx dict) = do
+                return $ Stream.Skip $ CompressDo st lz4Ctx Nothing
+    step gst (CompressDo st lz4Ctx prev) = do
         r <- step0 gst st
         case r of
             Stream.Yield arr st1 -> do
-                arr1 <- liftIO $ compressChunk arr lz4Ctx dict
-                return $ Stream.Yield arr1 (CompressDo st1 lz4Ctx dict)
+                arr1 <- liftIO $ compressChunk arr lz4Ctx
+                -- XXX touch the "prev" array to keep it alive?
+                return $ Stream.Yield arr1 (CompressDo st1 lz4Ctx (Just arr))
             Stream.Skip st1 ->
-                return $ Stream.Skip $ CompressDo st1 lz4Ctx dict
-            Stream.Stop -> return $ Stream.Skip $ CompressDone lz4Ctx dict
-    step _ (CompressDone lz4Ctx dict) =
-        liftIO $ c_freeStream lz4Ctx >> free dict >> return Stream.Stop
+                return $ Stream.Skip $ CompressDo st1 lz4Ctx prev
+            Stream.Stop -> return $ Stream.Skip $ CompressDone lz4Ctx
+    step _ (CompressDone lz4Ctx) =
+        liftIO $ c_freeStream lz4Ctx >> return Stream.Stop
 
 --------------------------------------------------------------------------------
 -- Decompression
