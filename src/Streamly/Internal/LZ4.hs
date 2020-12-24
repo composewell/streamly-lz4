@@ -77,8 +77,6 @@ import qualified Streamly.Internal.Data.Stream.StreamD as Stream
 -- Foreign
 --------------------------------------------------------------------------------
 
-#include <lz4.h>
-
 data C_LZ4Stream
 
 foreign import ccall unsafe "lz4.h LZ4_createStream"
