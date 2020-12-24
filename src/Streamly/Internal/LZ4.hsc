@@ -168,10 +168,10 @@ debug m = Stream.fromStreamD (debugD (Stream.toStreamD m))
 --------------------------------------------------------------------------------
 
 {-# ANN type CompressState Fuse #-}
-data CompressState st strm dict
-    = CInit st
-    | CProcess st strm dict
-    | CCleanup strm dict
+data CompressState st ctx dict
+    = CompressInit st
+    | CompressDo st ctx dict
+    | CompressDone ctx dict
 
 -- | See 'compress' for documentation.
 {-# INLINE [1] compressD #-}
@@ -182,7 +182,7 @@ compressD ::
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
 compressD i0 (Stream.Stream step0 state0) =
-    Stream.Stream step (CInit state0)
+    Stream.Stream step (CompressInit state0)
 
     where
 
@@ -198,7 +198,7 @@ compressD i0 (Stream.Stream step0 state0) =
     -- With INLINE statement and the usage of fusion-plugin results in an
     -- enormous code size when used with other combinators.
     {-# NOINLINE compressChunk #-}
-    compressChunk arr@(Array.Array fb _) strm dict = do
+    compressChunk arr@(Array.Array fb _) lz4Ctx dict = do
         withForeignPtr fb
             $ \b -> do
                   let cstr = castPtr b
@@ -210,8 +210,8 @@ compressD i0 (Stream.Stream step0 state0) =
                       $ \be -> do
                             size <-
                                 c_compressFastContinue
-                                    strm cstr (be `plusPtr` 8) clen olen i
-                            void $ c_saveDict strm dict (64 * 1024)
+                                    lz4Ctx cstr (be `plusPtr` 8) clen olen i
+                            void $ c_saveDict lz4Ctx dict (64 * 1024)
                             let cbe = castPtr be
                             poke cbe (fromIntegral clen :: Word32)
                             poke (cbe `plusPtr` 4) (fromIntegral size :: Word32)
@@ -221,22 +221,23 @@ compressD i0 (Stream.Stream step0 state0) =
 
     {-# INLINE [0] step #-}
     -- FIXME: {-# INLINE_LATE step #-}
-    step _ (CInit st) =
+    step _ (CompressInit st) =
         liftIO
             $ do
-                strm <- c_createStream
+                lz4Ctx <- c_createStream
                 dict <- mallocBytes (64 * 1024) :: IO CString
-                return $ Stream.Skip $ CProcess st strm dict
-    step _ (CCleanup strm dict) =
-        liftIO $ c_freeStream strm >> free dict >> return Stream.Stop
-    step gst (CProcess st strm dict) = do
+                return $ Stream.Skip $ CompressDo st lz4Ctx dict
+    step gst (CompressDo st lz4Ctx dict) = do
         r <- step0 gst st
         case r of
             Stream.Yield arr st1 -> do
-                arr1 <- liftIO $ compressChunk arr strm dict
-                return $ Stream.Yield arr1 (CProcess st1 strm dict)
-            Stream.Skip st1 -> return $ Stream.Skip $ CProcess st1 strm dict
-            Stream.Stop -> return $ Stream.Skip $ CCleanup strm dict
+                arr1 <- liftIO $ compressChunk arr lz4Ctx dict
+                return $ Stream.Yield arr1 (CompressDo st1 lz4Ctx dict)
+            Stream.Skip st1 ->
+                return $ Stream.Skip $ CompressDo st1 lz4Ctx dict
+            Stream.Stop -> return $ Stream.Skip $ CompressDone lz4Ctx dict
+    step _ (CompressDone lz4Ctx dict) =
+        liftIO $ c_freeStream lz4Ctx >> free dict >> return Stream.Stop
 
 --------------------------------------------------------------------------------
 -- Decompression
@@ -303,9 +304,9 @@ resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
 
 {-# ANN type DecompressState Fuse #-}
 data DecompressState buf st dict dsize
-    = DInit st
-    | DProcess st dict dsize
-    | DCleanup dict
+    = DecompressInit st
+    | DecompressDo st dict dsize
+    | DecompressDone dict
 
 -- | See 'decompressResized' for documentation.
 --
@@ -315,7 +316,7 @@ decompressResizedD :: MonadIO m
        => Stream.Stream m (Array.Array Word8)
        -> Stream.Stream m (Array.Array Word8)
 decompressResizedD (Stream.Stream step0 state0) =
-    Stream.Stream step (DInit state0)
+    Stream.Stream step (DecompressInit state0)
 
    where
 
@@ -352,18 +353,20 @@ decompressResizedD (Stream.Stream step0 state0) =
 
     {-# INLINE [0] step #-}
     -- FIXME: {-# INLINE_LATE step #-}
-    step _ (DInit st) =
+    step _ (DecompressInit st) =
         liftIO
             $ do
                 dict <- mallocBytes (64 * 1024) :: IO (Ptr Word8)
-                return $ Stream.Skip $ DProcess st dict 0
-    step _ (DCleanup dict) =
+                return $ Stream.Skip $ DecompressDo st dict 0
+    step _ (DecompressDone dict) =
         liftIO $ free dict >> return Stream.Stop
-    step gst (DProcess st dict dsize) = do
+    step gst (DecompressDo st dict dsize) = do
         r <- step0 gst st
         case r of
             Stream.Yield arr st1 -> do
                 (arr1, dsize1) <- liftIO $ decompressChunk arr dict dsize
-                return $ Stream.Yield arr1 (DProcess st1 dict dsize1)
-            Stream.Skip st1 -> return $ Stream.Skip $ DProcess st1 dict dsize
-            Stream.Stop -> return $ Stream.Skip $ DCleanup dict
+                return $ Stream.Yield arr1 (DecompressDo st1 dict dsize1)
+            Stream.Skip st1 ->
+                return $ Stream.Skip $ DecompressDo st1 dict dsize
+            Stream.Stop ->
+                return $ Stream.Skip $ DecompressDone dict
