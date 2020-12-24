@@ -43,8 +43,8 @@ decompressResizedcompress (i, lst) =
      in do lst1 <- Stream.toList $ decompressResized $ compress i strm
            lst `shouldBe` lst1
 
-decompressCompress :: (Int, [Array.Array Word8]) -> IO ()
-decompressCompress (i, lst) = do
+decompressCompress :: Int -> (Int, [Array.Array Word8]) -> IO ()
+decompressCompress bufsize (i, lst) = do
     let tmp = "/tmp/test.lz4"
         strm = Stream.fromList lst
     w <- openFile tmp WriteMode
@@ -54,7 +54,7 @@ decompressCompress (i, lst) = do
         Stream.toList
             $ Stream.bracket_ (openFile tmp ReadMode) hClose
             $ \h ->
-                  Stream.unfold Handle.readChunks h
+                  Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
                 & decompress
                 & ArrayStream.concat
     f2 <- Stream.toList $ ArrayStream.concat strm
@@ -65,7 +65,11 @@ main = do
     large <- generate genArrayW8ListLarge
     hspec
         $ describe "Identity"
-        $ propsSimple >> forM_ [-1, 5, 12, 100] (\a -> propsBig (a, large))
+        $ do
+            propsSimple
+            forM_ [-1, 5, 12, 100] $ \i ->
+                forM_ [512, 32 * 1024, 256 * 1024] $ \bufsize ->
+                    propsBig bufsize (i, large)
 
     where
 
@@ -77,10 +81,10 @@ main = do
         it "decompress . compress == id"
             $ property
             $ forAll ((,) <$> genAcceleration <*> genArrayW8List)
-            $ monadicIO . liftIO . decompressCompress
+            $ monadicIO . liftIO . decompressCompress 512
 
-    propsBig r@(i, _) = do
+    propsBig bufsize r@(i, _) = do
         it ("decompressResized . compress (" ++ show i ++ ") == id (big)")
             $ decompressResizedcompress r
-        it ("decompress . compress (" ++ show i ++ ") == id (big)")
-            $ decompressCompress r
+        it ("decompress . compress (" ++ show i ++ "/" ++ show bufsize ++ ") == id (big)")
+                $ decompressCompress bufsize r
