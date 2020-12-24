@@ -21,8 +21,9 @@ module Streamly.Internal.LZ4
     , compressD
     , resizeD
     , decompressResizedD
-    ) where
+    )
 
+where
 
 --------------------------------------------------------------------------------
 -- Developer notes
