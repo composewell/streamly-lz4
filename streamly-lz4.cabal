@@ -59,6 +59,7 @@ library
   default-extensions:  CPP
                      , EmptyDataDecls
                      , ForeignFunctionInterface
+                     , ScopedTypeVariables
 
 test-suite test-lz4
   type:                exitcode-stdio-1.0

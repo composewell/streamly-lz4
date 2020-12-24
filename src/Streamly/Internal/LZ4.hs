@@ -1,4 +1,3 @@
-{-# LANGUAGE ScopedTypeVariables #-}
 -- |
 -- Module      : Streamly.Internal.LZ4
 -- Copyright   : (c) 2020 Composewell Technologies
@@ -268,7 +267,7 @@ data ResizeState st arr
 --
 {-# INLINE [1] resizeD #-}
 -- FIXME: {-# INLINE_NORMAL resizeD #-}
-resizeD :: MonadIO m => 
+resizeD :: MonadIO m =>
     Stream.Stream m (Array.Array Word8) -> Stream.Stream m (Array.Array Word8)
 resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
 
