@@ -58,6 +58,8 @@ benchmarks.
 You need to run it from the top level directory like so,
 ```
 $ ./download-corpora.sh
+$ cabal run bench-lz4 -- --quick
+$ cabal run --flag fusion-plugin bench-lz4 -- --quick
 ```
 
 You can use `-f fusion-plugin` to build benchmarks with the
