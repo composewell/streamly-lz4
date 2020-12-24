@@ -13,17 +13,17 @@ import Test.QuickCheck.Gen
     )
 import Test.QuickCheck.Monadic (monadicIO)
 
-import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as A
-import qualified Streamly.Internal.Data.Stream.IsStream as S
-import qualified Streamly.Internal.FileSystem.Handle as H
-import qualified Streamly.Internal.Memory.ArrayStream as AS
+import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as Array
+import qualified Streamly.Internal.Data.Stream.IsStream as Stream
+import qualified Streamly.Internal.FileSystem.Handle as Handle
+import qualified Streamly.Internal.Memory.ArrayStream as ArrayStream
 
 import Streamly.LZ4
 
-genArrayW8List :: Gen [A.Array Word8]
-genArrayW8List = listOf $ A.fromList <$> listOf chooseAny
+genArrayW8List :: Gen [Array.Array Word8]
+genArrayW8List = listOf $ Array.fromList <$> listOf chooseAny
 
-genArrayW8ListLarge :: Gen [A.Array Word8]
+genArrayW8ListLarge :: Gen [Array.Array Word8]
 genArrayW8ListLarge = do
     let minArr = 1024 * 10
         maxArr = 1024 * 100
@@ -31,30 +31,33 @@ genArrayW8ListLarge = do
         maxVec = 100
     arrS <- choose (minArr, maxArr)
     vecS <- choose (minVec, maxVec)
-    let arrGen = A.fromList <$> vectorOf arrS chooseAny
+    let arrGen = Array.fromList <$> vectorOf arrS chooseAny
     vectorOf vecS arrGen
 
 genAcceleration :: Gen Int
 genAcceleration = elements [-1..12]
 
-decompressResizedcompress :: (Int, [A.Array Word8]) -> IO ()
+decompressResizedcompress :: (Int, [Array.Array Word8]) -> IO ()
 decompressResizedcompress (i, lst) =
-    let strm = S.fromList lst
-     in do lst1 <- S.toList $ decompressResized $ compress i strm
+    let strm = Stream.fromList lst
+     in do lst1 <- Stream.toList $ decompressResized $ compress i strm
            lst `shouldBe` lst1
 
-decompressCompress :: (Int, [A.Array Word8]) -> IO ()
+decompressCompress :: (Int, [Array.Array Word8]) -> IO ()
 decompressCompress (i, lst) = do
     let tmp = "/tmp/test.lz4"
-        strm = S.fromList lst
+        strm = Stream.fromList lst
     w <- openFile tmp WriteMode
-    compress i strm & H.fromChunks w
+    compress i strm & Handle.fromChunks w
     hClose w
     f1 <-
-        S.toList
-            $ S.bracket_ (openFile tmp ReadMode) hClose
-            $ \h -> S.unfold H.readChunks h & decompress & AS.concat
-    f2 <- S.toList $ AS.concat strm
+        Stream.toList
+            $ Stream.bracket_ (openFile tmp ReadMode) hClose
+            $ \h ->
+                  Stream.unfold Handle.readChunks h
+                & decompress
+                & ArrayStream.concat
+    f2 <- Stream.toList $ ArrayStream.concat strm
     f1 `shouldBe` f2
 
 main :: IO ()
