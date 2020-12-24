@@ -21,8 +21,9 @@ module Streamly.Internal.LZ4
     , compressD
     , resizeD
     , decompressResizedD
-    ) where
+    )
 
+where
 
 --------------------------------------------------------------------------------
 -- Developer notes
@@ -43,6 +44,8 @@ module Streamly.Internal.LZ4
 
 import Control.Monad (void)
 import Control.Monad.IO.Class (MonadIO(..))
+import Data.Coerce (coerce)
+import Data.Int (Int32)
 import Data.Word (Word32, Word8)
 import Foreign.C (CInt(..), CString)
 import Foreign.ForeignPtr (plusForeignPtr, withForeignPtr)
@@ -50,11 +53,14 @@ import Foreign.Marshal (copyBytes, free, mallocBytes)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peek, poke)
 import Fusion.Plugin.Types (Fuse (..))
+import Streamly.Internal.Control.Exception (assertM)
 import Streamly.Prelude (SerialT)
 
-import qualified Streamly.Internal.Data.Array.Storable.Foreign.Mut.Types as MA
-import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as A
-import qualified Streamly.Internal.Data.Stream.StreamD as D
+import qualified Streamly.Internal.Data.Array.Storable.Foreign as Array
+import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as Array
+import qualified
+    Streamly.Internal.Data.Array.Storable.Foreign.Mut.Types as MArray
+import qualified Streamly.Internal.Data.Stream.StreamD as Stream
 
 --------------------------------------------------------------------------------
 -- CPP helpers
@@ -108,8 +114,10 @@ foreign import ccall unsafe "lz4.h LZ4_decompress_safe_usingDict"
 -- | See 'debug' for documentation.
 {-# INLINE [1] debugD #-}
 -- FIXME: {-# INLINE_NORMAL debugD #-}
-debugD :: MonadIO m => D.Stream m (A.Array Word8) -> D.Stream m (A.Array Word8)
-debugD (D.Stream step0 state0) = D.Stream step (0 :: Int, state0)
+debugD :: MonadIO m
+    => Stream.Stream m (Array.Array Word8)
+    -> Stream.Stream m (Array.Array Word8)
+debugD (Stream.Stream step0 state0) = Stream.Stream step (0 :: Int, state0)
 
     where
 
@@ -117,8 +125,8 @@ debugD (D.Stream step0 state0) = D.Stream step (0 :: Int, state0)
     putDivider = putStrLn "---------------------------------"
 
     {-# INLINE debugger #-}
-    debugger i arr@(A.Array fb _) = do
-        let len = A.byteLength arr
+    debugger i arr@(Array.Array fb _) = do
+        let len = Array.byteLength arr
         if len <= 8
         then do
             putDivider
@@ -141,13 +149,13 @@ debugD (D.Stream step0 state0) = D.Stream step (0 :: Int, state0)
     step gst (i, st) = do
         r <- step0 gst st
         case r of
-            D.Yield arr st1 -> do
+            Stream.Yield arr st1 -> do
                 liftIO $ debugger i arr
-                return $ D.Yield arr (i + 1, st1)
-            D.Skip st1 -> return $ D.Skip (i, st1)
-            D.Stop -> do
+                return $ Stream.Yield arr (i + 1, st1)
+            Stream.Skip st1 -> return $ Stream.Skip (i, st1)
+            Stream.Stop -> do
                 liftIO putDivider
-                return D.Stop
+                return Stream.Stop
 
 -- | A simple combinator that prints the index, length, compressed size and
 -- decompressed size of each array element to standard output.
@@ -155,28 +163,33 @@ debugD (D.Stream step0 state0) = D.Stream step (0 :: Int, state0)
 -- This only works on stream of resized arrays.
 --
 {-# INLINE debug #-}
-debug :: MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
-debug m = D.fromStreamD (debugD (D.toStreamD m))
+debug :: MonadIO m
+    => SerialT m (Array.Array Word8) -> SerialT m (Array.Array Word8)
+debug m = Stream.fromStreamD (debugD (Stream.toStreamD m))
 
 --------------------------------------------------------------------------------
 -- Compression
 --------------------------------------------------------------------------------
 
 {-# ANN type CompressState Fuse #-}
-data CompressState st strm dict
-    = CInit st
-    | CProcess st strm dict
-    | CCleanup strm dict
+data CompressState st ctx dict
+    = CompressInit st
+    | CompressDo st ctx dict
+    | CompressDone ctx dict
 
+-- 64KB blocks are optimal as the dictionary max size is 64KB. We can rechunk
+-- the stream into 64KB blocks before compression.
+--
 -- | See 'compress' for documentation.
 {-# INLINE [1] compressD #-}
 -- FIXME: {-# INLINE_NORMAL compressD #-}
 compressD ::
        MonadIO m
     => Int
-    -> D.Stream m (A.Array Word8)
-    -> D.Stream m (A.Array Word8)
-compressD i0 (D.Stream step0 state0) = D.Stream step (CInit state0)
+    -> Stream.Stream m (Array.Array Word8)
+    -> Stream.Stream m (Array.Array Word8)
+compressD i0 (Stream.Stream step0 state0) =
+    Stream.Stream step (CompressInit state0)
 
     where
 
@@ -192,44 +205,54 @@ compressD i0 (D.Stream step0 state0) = D.Stream step (CInit state0)
     -- With INLINE statement and the usage of fusion-plugin results in an
     -- enormous code size when used with other combinators.
     {-# NOINLINE compressChunk #-}
-    compressChunk arr@(A.Array fb _) strm dict = do
-        withForeignPtr fb
-            $ \b -> do
-                  let cstr = castPtr b
-                      clen = fromIntegral $ A.byteLength arr
-                  olen <- c_compressBound clen
-                  (MA.Array fbe _ en) <- MA.newArray (fromIntegral olen + 8)
-                  withForeignPtr fbe
-                      $ \be -> do
-                            size <-
-                                c_compressFastContinue
-                                    strm cstr (be `plusPtr` 8) clen olen i
-                            void $ c_saveDict strm dict (64 * 1024)
-                            let cbe = castPtr be
-                            poke cbe (fromIntegral clen :: Word32)
-                            poke (cbe `plusPtr` 4) (fromIntegral size :: Word32)
-                            let bo1 = be `plusPtr` (fromIntegral size + 8)
-                            A.unsafeFreeze
-                                <$> MA.shrinkToFit (MA.Array fbe bo1 en)
+    compressChunk arr lz4Ctx dict = do
+        Array.asPtr arr
+            $ \src -> do
+                  let srcLen = fromIntegral $ Array.byteLength arr
+                  maxCLen <- c_compressBound srcLen
+                  -- allocate compressed block with 8 byte header.  First 4
+                  -- bytes of the header store the length of the uncompressed
+                  -- data and the next 4 bytes store the length of the
+                  -- compressed data.
+                  (MArray.Array fptr dstBegin dstMax) <-
+                        MArray.newArray (fromIntegral maxCLen + 8)
+                  let hdrSrcLen :: Ptr Word32 = castPtr dstBegin
+                      hdrCompLen :: Ptr Word32 = dstBegin `plusPtr` 4
+                      compData = dstBegin `plusPtr` 8
+                  compLen <-
+                       c_compressFastContinue
+                              lz4Ctx src compData srcLen maxCLen i
+                  void $ c_saveDict lz4Ctx dict (64 * 1024)
+                  poke hdrSrcLen (fromIntegral srcLen)
+                  poke hdrCompLen (fromIntegral compLen)
+                  let dstEnd = dstBegin `plusPtr` (fromIntegral compLen + 8)
+                      compArr = MArray.Array fptr dstEnd dstMax
+                  Array.unsafeFreeze <$> MArray.shrinkToFit compArr
 
     {-# INLINE [0] step #-}
     -- FIXME: {-# INLINE_LATE step #-}
-    step _ (CInit st) =
+    step _ (CompressInit st) =
         liftIO
             $ do
-                strm <- c_createStream
+                lz4Ctx <- c_createStream
+                -- Instead of using an external dictionary we could just hold
+                -- the previous chunks. However, the dictionary is only 64KB,
+                -- if the chunk size is bigger we would be holding a lot more
+                -- data than required. Also, the perf advantage does not seem
+                -- much.
                 dict <- mallocBytes (64 * 1024) :: IO CString
-                return $ D.Skip $ CProcess st strm dict
-    step _ (CCleanup strm dict) =
-        liftIO $ c_freeStream strm >> free dict >> return D.Stop
-    step gst (CProcess st strm dict) = do
+                return $ Stream.Skip $ CompressDo st lz4Ctx dict
+    step gst (CompressDo st lz4Ctx dict) = do
         r <- step0 gst st
         case r of
-            D.Yield arr st1 -> do
-                arr1 <- liftIO $ compressChunk arr strm dict
-                return $ D.Yield arr1 (CProcess st1 strm dict)
-            D.Skip st1 -> return $ D.Skip $ CProcess st1 strm dict
-            D.Stop -> return $ D.Skip $ CCleanup strm dict
+            Stream.Yield arr st1 -> do
+                arr1 <- liftIO $ compressChunk arr lz4Ctx dict
+                return $ Stream.Yield arr1 (CompressDo st1 lz4Ctx dict)
+            Stream.Skip st1 ->
+                return $ Stream.Skip $ CompressDo st1 lz4Ctx dict
+            Stream.Stop -> return $ Stream.Skip $ CompressDone lz4Ctx dict
+    step _ (CompressDone lz4Ctx dict) =
+        liftIO $ c_freeStream lz4Ctx >> free dict >> return Stream.Stop
 
 --------------------------------------------------------------------------------
 -- Decompression
@@ -247,65 +270,68 @@ data ResizeState st arr
 --
 {-# INLINE [1] resizeD #-}
 -- FIXME: {-# INLINE_NORMAL resizeD #-}
-resizeD :: MonadIO m => D.Stream m (A.Array Word8) -> D.Stream m (A.Array Word8)
-resizeD (D.Stream step0 state0) = D.Stream step (RInit state0)
+resizeD :: MonadIO m =>
+    Stream.Stream m (Array.Array Word8) -> Stream.Stream m (Array.Array Word8)
+resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
 
     where
 
     {-# INLINE process #-}
-    process st arr@(A.Array fb e) = do
-        let len = A.byteLength arr
+    process st arr@(Array.Array fb e) = do
+        let len = Array.byteLength arr
         if len <= 8
-        then return $ D.Skip $ RAccumlate st arr
+        then return $ Stream.Skip $ RAccumlate st arr
         else withForeignPtr fb
                  $ \b -> do
                        compressedSize <-
                            peek (castPtr (b `plusPtr` 4) :: Ptr Word32)
                        let required = fromIntegral compressedSize + 8
                        if len == required
-                       then return $ D.Skip $ RYield arr $ RInit st
+                       then return $ Stream.Skip $ RYield arr $ RInit st
                        else if len < required
-                       then return $ D.Skip $ RAccumlate st arr
+                       then return $ Stream.Skip $ RAccumlate st arr
                        else do
                            let arr1E = b `plusPtr` required
-                               arr1 = A.Array fb arr1E
+                               arr1 = Array.Array fb arr1E
                                arr2S = fb `plusForeignPtr` required
-                               arr2 = A.Array arr2S e
-                           return $ D.Skip $ RYield arr1 $ RProcess st arr2
+                               arr2 = Array.Array arr2S e
+                           return $ Stream.Skip $ RYield arr1 $ RProcess st arr2
 
     {-# INLINE [0] step #-}
     -- FIXME: {-# INLINE_LATE step #-}
-    step _ (RYield r next) = return $ D.Yield r next
+    step _ (RYield r next) = return $ Stream.Yield r next
     step gst (RInit st) = do
         r <- step0 gst st
         case r of
-            D.Yield arr st1 -> liftIO $ process st1 arr
-            D.Skip st1 -> return $ D.Skip $ RInit st1
-            D.Stop -> return D.Stop
+            Stream.Yield arr st1 -> liftIO $ process st1 arr
+            Stream.Skip st1 -> return $ Stream.Skip $ RInit st1
+            Stream.Stop -> return Stream.Stop
     step _ (RProcess st arr) = liftIO $ process st arr
     step gst (RAccumlate st buf) = do
         r <- step0 gst st
         case r of
-            D.Yield arr st1 -> do
-                arr1 <- A.spliceTwo buf arr
+            Stream.Yield arr st1 -> do
+                arr1 <- Array.spliceTwo buf arr
                 liftIO $ process st1 arr1
-            D.Skip st1 -> return $ D.Skip $ RAccumlate st1 buf
-            D.Stop -> return $ D.Skip $ RYield buf RDone
-    step _ RDone = return D.Stop
+            Stream.Skip st1 -> return $ Stream.Skip $ RAccumlate st1 buf
+            Stream.Stop -> return $ Stream.Skip $ RYield buf RDone
+    step _ RDone = return Stream.Stop
 
 {-# ANN type DecompressState Fuse #-}
 data DecompressState buf st dict dsize
-    = DInit st
-    | DProcess st dict dsize
-    | DCleanup dict
+    = DecompressInit st
+    | DecompressDo st dict dsize
+    | DecompressDone dict
 
 -- | See 'decompressResized' for documentation.
 --
 {-# INLINE [1] decompressResizedD #-}
 -- FIXME: {-# INLINE_NORMAL decompressResizedD #-}
-decompressResizedD ::
-       MonadIO m => D.Stream m (A.Array Word8) -> D.Stream m (A.Array Word8)
-decompressResizedD (D.Stream step0 state0) = D.Stream step (DInit state0)
+decompressResizedD :: MonadIO m
+       => Stream.Stream m (Array.Array Word8)
+       -> Stream.Stream m (Array.Array Word8)
+decompressResizedD (Stream.Stream step0 state0) =
+    Stream.Stream step (DecompressInit state0)
 
    where
 
@@ -316,44 +342,50 @@ decompressResizedD (D.Stream step0 state0) = D.Stream step (DInit state0)
     -- With INLINE statement and the usage of fusion-plugin results in an
     -- enormous code size when used with other combinators.
     {-# NOINLINE decompressChunk #-}
-    decompressChunk (A.Array fb _) dict dsize = do
-        withForeignPtr fb
-            $ \b -> do
-                  decompressedSize <- peek (castPtr b :: Ptr Word32)
-                  compressedSize <-
-                      peek (castPtr (b `plusPtr` 4) :: Ptr Word32)
-                  let cstr = castPtr (b `plusPtr` 8)
-                  (MA.Array fbe _ en) <-
-                      MA.newArray (fromIntegral decompressedSize)
-                  withForeignPtr fbe
-                      $ \be -> do
-                            dsize1 <-
-                                c_decompressSafeUsingDict
-                                    cstr be (fromIntegral compressedSize)
-                                        (fromIntegral decompressedSize)
-                                            dict dsize
-                            copyBytes
-                                dict be (min (fromIntegral dsize1) (64 * 1024))
-                            let bo1 = be `plusPtr` fromIntegral dsize1
-                            arr1 <-
-                                A.unsafeFreeze
-                                    <$> MA.shrinkToFit (MA.Array fbe bo1 en)
-                            return (arr1, dsize1)
+    decompressChunk arr dict dsize = do
+        Array.asPtr arr
+            $ \src -> do
+                  let hdrDecompLen :: Ptr Int32 = castPtr src
+                      hdrSrcLen :: Ptr Int32 = src `plusPtr` 4
+                      compData = src `plusPtr` 8
+                  decompLen <- peek hdrDecompLen
+                  srcLen <- peek hdrSrcLen
+                  (MArray.Array fptr dstBegin dstMax) <-
+                        MArray.newArray
+                            ((fromIntegral :: Int32 -> Int) decompLen)
+                  decompLen1 <-
+                      c_decompressSafeUsingDict
+                          compData
+                          dstBegin
+                          (coerce srcLen)
+                          (coerce decompLen)
+                          dict
+                          dsize
+                  assertM (decompLen == coerce decompLen1)
+                  copyBytes
+                      dict dstBegin (min (fromIntegral decompLen1) (64 * 1024))
+                  let dstEnd = dstBegin `plusPtr` fromIntegral decompLen1
+                      decompArr = MArray.Array fptr dstEnd dstMax
+                  decompArr1 <-
+                        Array.unsafeFreeze <$> MArray.shrinkToFit decompArr
+                  return (decompArr1, decompLen1)
 
     {-# INLINE [0] step #-}
     -- FIXME: {-# INLINE_LATE step #-}
-    step _ (DInit st) =
+    step _ (DecompressInit st) =
         liftIO
             $ do
                 dict <- mallocBytes (64 * 1024) :: IO (Ptr Word8)
-                return $ D.Skip $ DProcess st dict 0
-    step _ (DCleanup dict) =
-        liftIO $ free dict >> return D.Stop
-    step gst (DProcess st dict dsize) = do
+                return $ Stream.Skip $ DecompressDo st dict 0
+    step _ (DecompressDone dict) =
+        liftIO $ free dict >> return Stream.Stop
+    step gst (DecompressDo st dict dsize) = do
         r <- step0 gst st
         case r of
-            D.Yield arr st1 -> do
+            Stream.Yield arr st1 -> do
                 (arr1, dsize1) <- liftIO $ decompressChunk arr dict dsize
-                return $ D.Yield arr1 (DProcess st1 dict dsize1)
-            D.Skip st1 -> return $ D.Skip $ DProcess st1 dict dsize
-            D.Stop -> return $ D.Skip $ DCleanup dict
+                return $ Stream.Yield arr1 (DecompressDo st1 dict dsize1)
+            Stream.Skip st1 ->
+                return $ Stream.Skip $ DecompressDo st1 dict dsize
+            Stream.Stop ->
+                return $ Stream.Skip $ DecompressDone dict
