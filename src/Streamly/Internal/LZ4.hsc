@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 -- |
 -- Module      : Streamly.Internal.LZ4
 -- Copyright   : (c) 2020 Composewell Technologies
@@ -43,6 +44,8 @@ module Streamly.Internal.LZ4
 
 import Control.Monad (void)
 import Control.Monad.IO.Class (MonadIO(..))
+import Data.Coerce (coerce)
+import Data.Int (Int32)
 import Data.Word (Word32, Word8)
 import Foreign.C (CInt(..), CString)
 import Foreign.ForeignPtr (plusForeignPtr, withForeignPtr)
@@ -50,6 +53,7 @@ import Foreign.Marshal (copyBytes, free, mallocBytes)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peek, poke)
 import Fusion.Plugin.Types (Fuse (..))
+import Streamly.Internal.Control.Exception (assertM)
 import Streamly.Prelude (SerialT)
 
 import qualified Streamly.Internal.Data.Array.Storable.Foreign as Array
@@ -198,26 +202,26 @@ compressD i0 (Stream.Stream step0 state0) =
     -- With INLINE statement and the usage of fusion-plugin results in an
     -- enormous code size when used with other combinators.
     {-# NOINLINE compressChunk #-}
-    compressChunk arr@(Array.Array fb _) lz4Ctx dict = do
-        withForeignPtr fb
-            $ \b -> do
-                  let cstr = castPtr b
-                      clen = fromIntegral $ Array.byteLength arr
-                  olen <- c_compressBound clen
-                  (MArray.Array fbe _ en) <-
-                        MArray.newArray (fromIntegral olen + 8)
-                  withForeignPtr fbe
-                      $ \be -> do
-                            size <-
-                                c_compressFastContinue
-                                    lz4Ctx cstr (be `plusPtr` 8) clen olen i
-                            void $ c_saveDict lz4Ctx dict (64 * 1024)
-                            let cbe = castPtr be
-                            poke cbe (fromIntegral clen :: Word32)
-                            poke (cbe `plusPtr` 4) (fromIntegral size :: Word32)
-                            let bo1 = be `plusPtr` (fromIntegral size + 8)
-                            Array.unsafeFreeze
-                                <$> MArray.shrinkToFit (MArray.Array fbe bo1 en)
+    compressChunk arr lz4Ctx dict = do
+        Array.asPtr arr
+            $ \src -> do
+                  let srcLen = fromIntegral $ Array.byteLength arr
+                  maxCLen <- c_compressBound srcLen
+                  -- allocate compressed block with 8 byte header
+                  (MArray.Array fptr dstBegin dstMax) <-
+                        MArray.newArray (fromIntegral maxCLen + 8)
+                  let hdrSrcLen :: Ptr Word32 = castPtr dstBegin
+                      hdrCompLen :: Ptr Word32 = dstBegin `plusPtr` 4
+                      compData = dstBegin `plusPtr` 8
+                  compLen <-
+                       c_compressFastContinue
+                              lz4Ctx src compData srcLen maxCLen i
+                  void $ c_saveDict lz4Ctx dict (64 * 1024)
+                  poke hdrSrcLen (fromIntegral srcLen)
+                  poke hdrCompLen (fromIntegral compLen)
+                  let dstEnd = dstBegin `plusPtr` (fromIntegral compLen + 8)
+                      compArr = MArray.Array fptr dstEnd dstMax
+                  Array.unsafeFreeze <$> MArray.shrinkToFit compArr
 
     {-# INLINE [0] step #-}
     -- FIXME: {-# INLINE_LATE step #-}
@@ -255,7 +259,7 @@ data ResizeState st arr
 --
 {-# INLINE [1] resizeD #-}
 -- FIXME: {-# INLINE_NORMAL resizeD #-}
-resizeD :: MonadIO m =>
+resizeD :: MonadIO m => 
     Stream.Stream m (Array.Array Word8) -> Stream.Stream m (Array.Array Word8)
 resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
 
@@ -327,29 +331,33 @@ decompressResizedD (Stream.Stream step0 state0) =
     -- With INLINE statement and the usage of fusion-plugin results in an
     -- enormous code size when used with other combinators.
     {-# NOINLINE decompressChunk #-}
-    decompressChunk (Array.Array fb _) dict dsize = do
-        withForeignPtr fb
-            $ \b -> do
-                  decompressedSize <- peek (castPtr b :: Ptr Word32)
-                  compressedSize <-
-                      peek (castPtr (b `plusPtr` 4) :: Ptr Word32)
-                  let cstr = castPtr (b `plusPtr` 8)
-                  (MArray.Array fbe _ en) <-
-                      MArray.newArray (fromIntegral decompressedSize)
-                  withForeignPtr fbe
-                      $ \be -> do
-                            dsize1 <-
-                                c_decompressSafeUsingDict
-                                    cstr be (fromIntegral compressedSize)
-                                        (fromIntegral decompressedSize)
-                                            dict dsize
-                            copyBytes
-                                dict be (min (fromIntegral dsize1) (64 * 1024))
-                            let bo1 = be `plusPtr` fromIntegral dsize1
-                            arr1 <-
-                                Array.unsafeFreeze
-                                    <$> MArray.shrinkToFit (MArray.Array fbe bo1 en)
-                            return (arr1, dsize1)
+    decompressChunk arr dict dsize = do
+        Array.asPtr arr
+            $ \src -> do
+                  let hdrDecompLen :: Ptr Int32 = castPtr src
+                      hdrSrcLen :: Ptr Int32 = src `plusPtr` 4
+                      compData = src `plusPtr` 8
+                  decompLen <- peek hdrDecompLen
+                  srcLen <- peek hdrSrcLen
+                  (MArray.Array fptr dstBegin dstMax) <-
+                        MArray.newArray
+                            ((fromIntegral :: Int32 -> Int) decompLen)
+                  decompLen1 <-
+                      c_decompressSafeUsingDict
+                          compData
+                          dstBegin
+                          (coerce srcLen)
+                          (coerce decompLen)
+                          dict
+                          dsize
+                  assertM (decompLen == coerce decompLen1)
+                  copyBytes
+                      dict dstBegin (min (fromIntegral decompLen1) (64 * 1024))
+                  let dstEnd = dstBegin `plusPtr` fromIntegral decompLen1
+                      decompArr = MArray.Array fptr dstEnd dstMax
+                  decompArr1 <-
+                        Array.unsafeFreeze <$> MArray.shrinkToFit decompArr
+                  return (decompArr1, decompLen1)
 
     {-# INLINE [0] step #-}
     -- FIXME: {-# INLINE_LATE step #-}
