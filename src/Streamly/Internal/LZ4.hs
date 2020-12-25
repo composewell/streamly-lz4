@@ -18,6 +18,8 @@
 module Streamly.Internal.LZ4
     ( debugD
     , debug
+    , compressChunk
+    , decompressChunk
     , compressD
     , resizeD
     , decompressResizedD
@@ -42,7 +44,6 @@ where
 -- Imports
 --------------------------------------------------------------------------------
 
-import Control.Monad (void)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Coerce (coerce)
 import Data.Int (Int32)
@@ -163,6 +164,84 @@ debug :: MonadIO m
 debug m = Stream.fromStreamD (debugD (Stream.toStreamD m))
 
 --------------------------------------------------------------------------------
+-- Primitives
+--------------------------------------------------------------------------------
+
+-- Having NOINLINE here does not effect the performance a lot. Every
+-- iteration of the loop is a little slower (< 1us) but the entire loop
+-- fuses.
+-- On a stream with 404739 elements of 10 bytes each,
+-- With NOINLINE: 96.14 ms
+-- With INLINE:   81.07 ms
+--
+-- With INLINE statement and the usage of fusion-plugin results in an
+-- enormous code size when used with other combinators.
+-- | Primitive function to compress a chunk of Word8.
+{-# NOINLINE compressChunk #-}
+compressChunk ::
+       Int -> Ptr C_LZ4Stream -> Array.Array Word8 -> IO (Array.Array Word8)
+compressChunk i ctx arr = do
+    Array.asPtr arr
+        $ \src -> do
+              let srcLen = fromIntegral $ Array.byteLength arr
+              maxCLen <- c_compressBound srcLen
+              -- allocate compressed block with 8 byte header.  First 4
+              -- bytes of the header store the length of the uncompressed
+              -- data and the next 4 bytes store the length of the
+              -- compressed data.
+              (MArray.Array fptr dstBegin dstMax) <-
+                  MArray.newArray (fromIntegral maxCLen + 8)
+              let hdrSrcLen :: Ptr Word32 = castPtr dstBegin
+                  hdrCompLen :: Ptr Word32 = dstBegin `plusPtr` 4
+                  compData = dstBegin `plusPtr` 8
+              compLen <-
+                  c_compressFastContinue
+                      ctx src compData srcLen maxCLen (fromIntegral i)
+              poke hdrSrcLen (fromIntegral srcLen)
+              poke hdrCompLen (fromIntegral compLen)
+              let dstEnd = dstBegin `plusPtr` (fromIntegral compLen + 8)
+                  compArr = MArray.Array fptr dstEnd dstMax
+              Array.unsafeFreeze <$> MArray.shrinkToFit compArr
+
+-- Having NOINLINE here does not effect the performance a lot. Every
+-- iteration of the loop is a little slower (< 1us) but the entire loop
+-- fuses.
+--
+-- With INLINE statement and the usage of fusion-plugin results in an
+-- enormous code size when used with other combinators.
+-- | Primitive function to decompress a chunk of Word8.
+{-# NOINLINE decompressChunk #-}
+decompressChunk ::
+       Array.Array Word8 -> Ptr Word8 -> Int -> IO (Array.Array Word8, Int)
+decompressChunk arr dict dsize = do
+    Array.asPtr arr
+        $ \src -> do
+              let hdrDecompLen :: Ptr Int32 = castPtr src
+                  hdrSrcLen :: Ptr Int32 = src `plusPtr` 4
+                  compData = src `plusPtr` 8
+              decompLen <- peek hdrDecompLen
+              srcLen <- peek hdrSrcLen
+              (MArray.Array fptr dstBegin dstMax) <-
+                    MArray.newArray
+                        ((fromIntegral :: Int32 -> Int) decompLen)
+              decompLen1 <-
+                  c_decompressSafeUsingDict
+                      compData
+                      dstBegin
+                      (coerce srcLen)
+                      (coerce decompLen)
+                      dict
+                      ((fromIntegral :: Int -> CInt) dsize)
+              assertM (decompLen == coerce decompLen1)
+              copyBytes
+                  dict dstBegin (min (fromIntegral decompLen1) (64 * 1024))
+              let dstEnd = dstBegin `plusPtr` fromIntegral decompLen1
+                  decompArr = MArray.Array fptr dstEnd dstMax
+              decompArr1 <-
+                    Array.unsafeFreeze <$> MArray.shrinkToFit decompArr
+              return (decompArr1, fromIntegral decompLen1)
+
+--------------------------------------------------------------------------------
 -- Compression
 --------------------------------------------------------------------------------
 
@@ -190,39 +269,6 @@ compressD i0 (Stream.Stream step0 state0) =
 
     i = fromIntegral $ max i0 0
 
-    -- Having NOINLINE here does not effect the performance a lot. Every
-    -- iteration of the loop is a little slower (< 1us) but the entire loop
-    -- fuses.
-    -- On a stream with 404739 elements of 10 bytes each,
-    -- With NOINLINE: 96.14 ms
-    -- With INLINE:   81.07 ms
-    --
-    -- With INLINE statement and the usage of fusion-plugin results in an
-    -- enormous code size when used with other combinators.
-    {-# NOINLINE compressChunk #-}
-    compressChunk arr lz4Ctx = do
-        Array.asPtr arr
-            $ \src -> do
-                  let srcLen = fromIntegral $ Array.byteLength arr
-                  maxCLen <- c_compressBound srcLen
-                  -- allocate compressed block with 8 byte header.  First 4
-                  -- bytes of the header store the length of the uncompressed
-                  -- data and the next 4 bytes store the length of the
-                  -- compressed data.
-                  (MArray.Array fptr dstBegin dstMax) <-
-                        MArray.newArray (fromIntegral maxCLen + 8)
-                  let hdrSrcLen :: Ptr Word32 = castPtr dstBegin
-                      hdrCompLen :: Ptr Word32 = dstBegin `plusPtr` 4
-                      compData = dstBegin `plusPtr` 8
-                  compLen <-
-                       c_compressFastContinue
-                              lz4Ctx src compData srcLen maxCLen i
-                  poke hdrSrcLen (fromIntegral srcLen)
-                  poke hdrCompLen (fromIntegral compLen)
-                  let dstEnd = dstBegin `plusPtr` (fromIntegral compLen + 8)
-                      compArr = MArray.Array fptr dstEnd dstMax
-                  Array.unsafeFreeze <$> MArray.shrinkToFit compArr
-
     {-# INLINE [0] step #-}
     -- FIXME: {-# INLINE_LATE step #-}
     step _ (CompressInit st) =
@@ -239,7 +285,7 @@ compressD i0 (Stream.Stream step0 state0) =
         r <- step0 gst st
         case r of
             Stream.Yield arr st1 -> do
-                arr1 <- liftIO $ compressChunk arr lz4Ctx
+                arr1 <- liftIO $ compressChunk i lz4Ctx arr
                 -- XXX touch the "prev" array to keep it alive?
                 return $ Stream.Yield arr1 (CompressDo st1 lz4Ctx (Just arr))
             Stream.Skip st1 ->
@@ -328,41 +374,6 @@ decompressResizedD (Stream.Stream step0 state0) =
     Stream.Stream step (DecompressInit state0)
 
    where
-
-    -- Having NOINLINE here does not effect the performance a lot. Every
-    -- iteration of the loop is a little slower (< 1us) but the entire loop
-    -- fuses.
-    --
-    -- With INLINE statement and the usage of fusion-plugin results in an
-    -- enormous code size when used with other combinators.
-    {-# NOINLINE decompressChunk #-}
-    decompressChunk arr dict dsize = do
-        Array.asPtr arr
-            $ \src -> do
-                  let hdrDecompLen :: Ptr Int32 = castPtr src
-                      hdrSrcLen :: Ptr Int32 = src `plusPtr` 4
-                      compData = src `plusPtr` 8
-                  decompLen <- peek hdrDecompLen
-                  srcLen <- peek hdrSrcLen
-                  (MArray.Array fptr dstBegin dstMax) <-
-                        MArray.newArray
-                            ((fromIntegral :: Int32 -> Int) decompLen)
-                  decompLen1 <-
-                      c_decompressSafeUsingDict
-                          compData
-                          dstBegin
-                          (coerce srcLen)
-                          (coerce decompLen)
-                          dict
-                          dsize
-                  assertM (decompLen == coerce decompLen1)
-                  copyBytes
-                      dict dstBegin (min (fromIntegral decompLen1) (64 * 1024))
-                  let dstEnd = dstBegin `plusPtr` fromIntegral decompLen1
-                      decompArr = MArray.Array fptr dstEnd dstMax
-                  decompArr1 <-
-                        Array.unsafeFreeze <$> MArray.shrinkToFit decompArr
-                  return (decompArr1, decompLen1)
 
     {-# INLINE [0] step #-}
     -- FIXME: {-# INLINE_LATE step #-}
