@@ -12,6 +12,7 @@ import Test.QuickCheck.Gen
     , listOf, vectorOf
     )
 import Test.QuickCheck.Monadic (monadicIO)
+import Data.List ((\\))
 
 import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as Array
 import qualified Streamly.Internal.Data.Stream.IsStream as Stream
@@ -40,8 +41,16 @@ genAcceleration = elements [-1..12]
 decompressResizedcompress :: (Int, [Array.Array Word8]) -> IO ()
 decompressResizedcompress (i, lst) =
     let strm = Stream.fromList lst
-     in do lst1 <- Stream.toList $ decompressResized $ compress i strm
-           lst `shouldBe` lst1
+     in do
+            lst1 <- Stream.toList $ decompressResized $ compress i strm
+            putStrLn $ "lst length = " ++ show (length lst)
+            putStrLn $ "lst1 length = " ++ show (length lst1)
+            if lst /= lst1
+            then do
+                putStrLn $ show (length $ lst1 \\ lst)
+                error "failed"
+            else
+                return ()
 
 decompressCompress :: Int -> (Int, [Array.Array Word8]) -> IO ()
 decompressCompress bufsize (i, lst) = do
@@ -66,9 +75,9 @@ main = do
     hspec
         $ describe "Identity"
         $ do
-            propsSimple
-            forM_ [-1, 5, 12, 100] $ \i ->
-                forM_ [512, 32 * 1024, 256 * 1024] $ \bufsize ->
+ --           propsSimple
+            forM_ [1] $ \i ->
+                forM_ [512] $ \bufsize ->
                     propsBig bufsize (i, large)
 
     where
@@ -86,5 +95,7 @@ main = do
     propsBig bufsize r@(i, _) = do
         it ("decompressResized . compress (" ++ show i ++ ") == id (big)")
             $ decompressResizedcompress r
+            {-
         it ("decompress . compress (" ++ show i ++ "/" ++ show bufsize ++ ") == id (big)")
                 $ decompressCompress bufsize r
+                -}
