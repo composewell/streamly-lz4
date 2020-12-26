@@ -77,10 +77,14 @@ decompressResizedcompress (i, lst) =
 
 decompressCompress :: Int -> (Int, [Array.Array Word8]) -> IO ()
 decompressCompress bufsize (i, lst) = do
-    let tmp = "/tmp/test.lz4"
+    let tmp = "/tmp/test.lz4.compressed"
+    let tmp1 = "/tmp/test.lz4.uncompressed"
         strm = Stream.fromList lst
     w <- openFile tmp WriteMode
     compress i strm & Handle.fromChunks w
+    hClose w
+    w1 <- openFile tmp1 WriteMode
+    Handle.fromChunks w1 strm
     hClose w
     f1 <-
         Stream.toList
@@ -89,7 +93,12 @@ decompressCompress bufsize (i, lst) = do
                   Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
                 & decompress
                 & ArrayStream.concat
-    f2 <- Stream.toList $ ArrayStream.concat strm
+    f2 <-
+        Stream.toList
+            $ Stream.bracket_ (openFile tmp1 ReadMode) hClose
+            $ \h ->
+                  Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
+                & ArrayStream.concat
     when (f1 /= f2) $ do
         putStrLn $ "length arr = " ++ show (length lst)
         putStrLn $ "length = " ++ show (length f1)
