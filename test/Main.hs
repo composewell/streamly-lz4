@@ -80,15 +80,14 @@ decompressCompress bufsize (i, lst) = do
     let tmp = "/tmp/test.lz4"
         strm = Stream.fromList lst
     w <- openFile tmp WriteMode
-    -- compress i strm & Handle.fromChunks w
-    Handle.fromChunks w strm
+    compress i strm & Handle.fromChunks w
     hClose w
     f1 <-
         Stream.toList
             $ Stream.bracket_ (openFile tmp ReadMode) hClose
             $ \h ->
                   Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
-                -- & decompress
+                & decompress
                 & ArrayStream.concat
     f2 <- Stream.toList $ ArrayStream.concat strm
     when (f1 /= f2) $ do
