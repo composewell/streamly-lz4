@@ -248,6 +248,53 @@ decompressChunk ctx arr = do
               Array.unsafeFreeze <$> MArray.shrinkToFit decompArr
 
 --------------------------------------------------------------------------------
+-- Common streaming combinator
+--------------------------------------------------------------------------------
+
+{-# ANN type StreamingState Fuse #-}
+data StreamingState st ctx prev
+    = StreamingInit st
+    | StreamingDo st ctx prev
+    | StreamingDone ctx
+
+-- | A generic stream function which can be used with the streaming functions
+-- provided by LZ4.
+{-# INLINE [1] streamWith #-}
+-- FIXME: {-# INLINE_NORMAL streamWith #-}
+streamWith ::
+       MonadIO m
+    => m ctx
+    -> (ctx -> m ())
+    -> (ctx -> Array.Array Word8 -> m (Array.Array Word8))
+    -> Stream.Stream m (Array.Array Word8)
+    -> Stream.Stream m (Array.Array Word8)
+streamWith create destroy process (Stream.Stream step0 state0) =
+    Stream.Stream step (StreamingInit state0)
+
+    where
+
+    {-# INLINE [0] step #-}
+    -- FIXME: {-# INLINE_LATE step #-}
+    step _ (StreamingInit st) = do
+        ctx <- create
+        -- Instead of using an external dictionary we could just hold the
+        -- previous chunks. However, the dictionary is only 64KB, if the chunk
+        -- size is bigger we would be holding a lot more data than
+        -- required. Also, the perf advantage does not seem much.
+        return $ Stream.Skip $ StreamingDo st ctx Nothing
+    step gst (StreamingDo st ctx prev) = do
+        r <- step0 gst st
+        case r of
+            Stream.Yield arr st1 -> do
+                arr1 <- process ctx arr
+                -- XXX touch the "prev" array to keep it alive?
+                return $ Stream.Yield arr1 (StreamingDo st1 ctx (Just arr))
+            Stream.Skip st1 ->
+                return $ Stream.Skip $ StreamingDo st1 ctx prev
+            Stream.Stop -> return $ Stream.Skip $ StreamingDone ctx
+    step _ (StreamingDone ctx) = destroy ctx >> return Stream.Stop
+
+--------------------------------------------------------------------------------
 -- Compression
 --------------------------------------------------------------------------------
 
