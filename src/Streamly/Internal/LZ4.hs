@@ -20,9 +20,12 @@ module Streamly.Internal.LZ4
     , debug
     , compressChunk
     , decompressChunk
-    , compressD
     , resizeD
-    , decompressResizedD
+    , c_createStream
+    , c_freeStream
+    , c_createStreamDecode
+    , c_freeStreamDecode
+    , streamWith
     )
 
 where
@@ -295,60 +298,7 @@ streamWith create destroy process (Stream.Stream step0 state0) =
     step _ (StreamingDone ctx) = destroy ctx >> return Stream.Stop
 
 --------------------------------------------------------------------------------
--- Compression
---------------------------------------------------------------------------------
-
-{-# ANN type CompressState Fuse #-}
-data CompressState st ctx prev
-    = CompressInit st
-    | CompressDo st ctx prev
-    | CompressDone ctx
-
--- 64KB blocks are optimal as the dictionary max size is 64KB. We can rechunk
--- the stream into 64KB blocks before compression.
---
--- | See 'compress' for documentation.
-{-# INLINE [1] compressD #-}
--- FIXME: {-# INLINE_NORMAL compressD #-}
-compressD ::
-       MonadIO m
-    => Int
-    -> Stream.Stream m (Array.Array Word8)
-    -> Stream.Stream m (Array.Array Word8)
-compressD i0 (Stream.Stream step0 state0) =
-    Stream.Stream step (CompressInit state0)
-
-    where
-
-    i = fromIntegral $ max i0 0
-
-    {-# INLINE [0] step #-}
-    -- FIXME: {-# INLINE_LATE step #-}
-    step _ (CompressInit st) =
-        liftIO
-            $ do
-                lz4Ctx <- c_createStream
-                -- Instead of using an external dictionary we could just hold
-                -- the previous chunks. However, the dictionary is only 64KB,
-                -- if the chunk size is bigger we would be holding a lot more
-                -- data than required. Also, the perf advantage does not seem
-                -- much.
-                return $ Stream.Skip $ CompressDo st lz4Ctx Nothing
-    step gst (CompressDo st lz4Ctx prev) = do
-        r <- step0 gst st
-        case r of
-            Stream.Yield arr st1 -> do
-                arr1 <- liftIO $ compressChunk i lz4Ctx arr
-                -- XXX touch the "prev" array to keep it alive?
-                return $ Stream.Yield arr1 (CompressDo st1 lz4Ctx (Just arr))
-            Stream.Skip st1 ->
-                return $ Stream.Skip $ CompressDo st1 lz4Ctx prev
-            Stream.Stop -> return $ Stream.Skip $ CompressDone lz4Ctx
-    step _ (CompressDone lz4Ctx) =
-        liftIO $ c_freeStream lz4Ctx >> return Stream.Stop
-
---------------------------------------------------------------------------------
--- Decompression
+-- Resizing
 --------------------------------------------------------------------------------
 
 {-# ANN type ResizeState Fuse #-}
@@ -409,41 +359,3 @@ resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
             Stream.Skip st1 -> return $ Stream.Skip $ RAccumlate st1 buf
             Stream.Stop -> return $ Stream.Skip $ RYield buf RDone
     step _ RDone = return Stream.Stop
-
-{-# ANN type DecompressState Fuse #-}
-data DecompressState st ctx prev
-    = DecompressInit st
-    | DecompressDo st ctx prev
-    | DecompressDone ctx
-
--- | See 'decompressResized' for documentation.
---
-{-# INLINE [1] decompressResizedD #-}
--- FIXME: {-# INLINE_NORMAL decompressResizedD #-}
-decompressResizedD :: MonadIO m
-       => Stream.Stream m (Array.Array Word8)
-       -> Stream.Stream m (Array.Array Word8)
-decompressResizedD (Stream.Stream step0 state0) =
-    Stream.Stream step (DecompressInit state0)
-
-   where
-
-    {-# INLINE [0] step #-}
-    -- FIXME: {-# INLINE_LATE step #-}
-    step _ (DecompressInit st) =
-        liftIO
-            $ do
-                lz4Ctx <- c_createStreamDecode
-                return $ Stream.Skip $ DecompressDo st lz4Ctx Nothing
-    step _ (DecompressDone lz4Ctx) =
-        liftIO $ c_freeStreamDecode lz4Ctx >> return Stream.Stop
-    step gst (DecompressDo st lz4Ctx prev) = do
-        r <- step0 gst st
-        case r of
-            Stream.Yield arr st1 -> do
-                arr1 <- liftIO $ decompressChunk lz4Ctx arr
-                return $ Stream.Yield arr1 (DecompressDo st1 lz4Ctx (Just arr))
-            Stream.Skip st1 ->
-                return $ Stream.Skip $ DecompressDo st1 lz4Ctx prev
-            Stream.Stop ->
-                return $ Stream.Skip $ DecompressDone lz4Ctx

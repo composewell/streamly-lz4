@@ -40,11 +40,11 @@ module Streamly.LZ4
 -- Imports
 --------------------------------------------------------------------------------
 
-import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.IO.Class (MonadIO(..))
 import Data.Word (Word8)
 import Streamly.Internal.Data.Array.Storable.Foreign (Array)
 import Streamly.Internal.Data.Stream.StreamD (fromStreamD, toStreamD)
-import Streamly.Prelude (SerialT)
+import Streamly.Internal.Data.Stream.IsStream (SerialT)
 
 import Streamly.Internal.LZ4
 
@@ -67,7 +67,15 @@ compress ::
     => Int
     -> SerialT m (Array Word8)
     -> SerialT m (Array Word8)
-compress i m = fromStreamD (compressD i (toStreamD m))
+compress i m = fromStreamD $ compressD $ toStreamD m
+
+    where
+
+    compressD =
+        streamWith
+            (liftIO c_createStream)
+            (liftIO . c_freeStream)
+            (\c -> liftIO . compressChunk i c)
 
 --------------------------------------------------------------------------------
 -- Decompression
@@ -91,7 +99,15 @@ resize m = fromStreamD (resizeD (toStreamD m))
 {-# INLINE decompressResized #-}
 decompressResized ::
        MonadIO m => SerialT m (Array Word8) -> SerialT m (Array Word8)
-decompressResized m = fromStreamD (decompressResizedD (toStreamD m))
+decompressResized m = fromStreamD $ decompressResizedD $ toStreamD m
+
+    where
+
+    decompressResizedD =
+        streamWith
+            (liftIO c_createStreamDecode)
+            (liftIO . c_freeStreamDecode)
+            (\c -> liftIO . decompressChunk c)
 
 -- | Decompress a stream of arrays compressed using LZ4 stream compression.
 {-# INLINE decompress #-}
