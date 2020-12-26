@@ -1,6 +1,7 @@
 module Main (main) where
 
-import Control.Monad (forM_)
+import Data.Maybe (catMaybes)
+import Control.Monad (forM_, when)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Word (Word8)
 import Data.Function ((&))
@@ -79,17 +80,23 @@ decompressCompress bufsize (i, lst) = do
     let tmp = "/tmp/test.lz4"
         strm = Stream.fromList lst
     w <- openFile tmp WriteMode
-    compress i strm & Handle.fromChunks w
+    -- compress i strm & Handle.fromChunks w
+    Handle.fromChunks w strm
     hClose w
     f1 <-
         Stream.toList
             $ Stream.bracket_ (openFile tmp ReadMode) hClose
             $ \h ->
                   Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
-                & decompress
+                -- & decompress
                 & ArrayStream.concat
     f2 <- Stream.toList $ ArrayStream.concat strm
-    f1 `shouldBe` f2
+    when (f1 /= f2) $ do
+        putStrLn $ "length arr = " ++ show (length lst)
+        putStrLn $ "length = " ++ show (length f1)
+        let xx = zipWith3 (\x y z -> if x /= y then Just z else Nothing) f1 f2 [(1::Int)..]
+        error $ "decompressCompress failed" ++ show (take 10 (catMaybes xx))
+    -- f1 `shouldBe` f2
 
 main :: IO ()
 main = do
@@ -97,11 +104,11 @@ main = do
     hspec
         $ describe "Identity"
         $ do
-            propsChunk
-            propsChunk2
-            propsSimple
-            forM_ [-1, 5, 12, 100] $ \i ->
-                forM_ [512, 32 * 1024, 256 * 1024] $ \bufsize ->
+            -- propsChunk
+            -- propsChunk2
+            -- propsSimple
+            forM_ [-1] $ \i ->
+                forM_ [512] $ \bufsize ->
                     propsBig bufsize (i, large)
 
     where
@@ -117,8 +124,10 @@ main = do
             $ monadicIO . liftIO . decompressCompress 512
 
     propsBig bufsize r@(i, _) = do
+            {-
         it ("decompressResized . compress (" ++ show i ++ ") == id (big)")
             $ decompressResizedcompress r
+                -}
         it ("decompress . compress (" ++ show i ++ "/" ++ show bufsize ++ ") == id (big)")
                 $ decompressCompress bufsize r
 
