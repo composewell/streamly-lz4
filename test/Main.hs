@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 module Main (main) where
 
 import Data.Maybe (catMaybes)
@@ -18,6 +19,7 @@ import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as Array
 import qualified Streamly.Internal.Data.Stream.IsStream as Stream
 import qualified Streamly.Internal.FileSystem.Handle as Handle
 import qualified Streamly.Internal.Memory.ArrayStream as ArrayStream
+import qualified Streamly.Unicode.Stream as Unicode
 
 import Streamly.Internal.LZ4
 import Streamly.LZ4
@@ -79,13 +81,19 @@ decompressCompress :: Int -> (Int, [Array.Array Word8]) -> IO ()
 decompressCompress bufsize (i, lst) = do
     let tmp = "/tmp/test.lz4.compressed"
     let tmp1 = "/tmp/test.lz4.uncompressed"
-        strm = Stream.fromList lst
+
+    {-
+    w1 <- openFile tmp1 ReadMode
+    let s = Stream.unfold Handle.readChunksWithBufferOf (bufsize, w1)
+    lst <- Stream.toList s
+    hClose w1
+    -}
+
+    let strm = Stream.fromList lst
     w <- openFile tmp WriteMode
     compress i strm & Handle.fromChunks w
     hClose w
-    w1 <- openFile tmp1 WriteMode
-    Handle.fromChunks w1 strm
-    hClose w
+
     f1 <-
         Stream.toList
             $ Stream.bracket_ (openFile tmp ReadMode) hClose
@@ -100,6 +108,10 @@ decompressCompress bufsize (i, lst) = do
                   Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
                 & ArrayStream.concat
     when (f1 /= f2) $ do
+        w1 <- openFile tmp1 WriteMode
+        Handle.fromBytes w1 $ Unicode.encodeLatin1 $ Stream.fromList $ show lst
+        hClose w1
+
         putStrLn $ "length arr = " ++ show (length lst)
         putStrLn $ "length = " ++ show (length f1)
         let xx = zipWith3 (\x y z -> if x /= y then Just z else Nothing) f1 f2 [(1::Int)..]
