@@ -50,7 +50,6 @@ import Data.Int (Int32)
 import Data.Word (Word32, Word8)
 import Foreign.C (CInt(..), CString)
 import Foreign.ForeignPtr (plusForeignPtr, withForeignPtr)
-import Foreign.Marshal (copyBytes, free, mallocBytes)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peek, poke)
 import Fusion.Plugin.Types (Fuse (..))
@@ -80,11 +79,19 @@ import qualified Streamly.Internal.Data.Stream.StreamD as Stream
 
 data C_LZ4Stream
 
+data C_LZ4StreamDecode
+
 foreign import ccall unsafe "lz4.h LZ4_createStream"
     c_createStream :: IO (Ptr C_LZ4Stream)
 
 foreign import ccall unsafe "lz4.h LZ4_freeStream"
     c_freeStream :: Ptr C_LZ4Stream -> IO ()
+
+foreign import ccall unsafe "lz4.h LZ4_createStreamDecode"
+    c_createStreamDecode :: IO (Ptr C_LZ4StreamDecode)
+
+foreign import ccall unsafe "lz4.h LZ4_freeStreamDecode"
+    c_freeStreamDecode :: Ptr C_LZ4StreamDecode -> IO ()
 
 foreign import ccall unsafe "lz4.h LZ4_compressBound"
     c_compressBound :: CInt -> IO CInt
@@ -99,9 +106,14 @@ foreign import ccall unsafe "lz4.h LZ4_compress_fast_continue"
         -> CInt
         -> IO CInt
 
-foreign import ccall unsafe "lz4.h LZ4_decompress_safe_usingDict"
-    c_decompressSafeUsingDict
-        :: CString -> Ptr Word8 -> CInt -> CInt -> Ptr Word8 -> CInt -> IO CInt
+foreign import ccall unsafe "lz4.h LZ4_decompress_safe_continue"
+    c_decompressSafeContinue
+        :: Ptr C_LZ4StreamDecode
+        -> CString
+        -> Ptr Word8
+        -> CInt
+        -> CInt
+        -> IO CInt
 
 --------------------------------------------------------------------------------
 -- Debugging
@@ -212,8 +224,8 @@ compressChunk i ctx arr = do
 -- | Primitive function to decompress a chunk of Word8.
 {-# NOINLINE decompressChunk #-}
 decompressChunk ::
-       Array.Array Word8 -> Ptr Word8 -> Int -> IO (Array.Array Word8, Int)
-decompressChunk arr dict dsize = do
+       Ptr C_LZ4StreamDecode -> Array.Array Word8 -> IO (Array.Array Word8)
+decompressChunk ctx arr = do
     Array.asPtr arr
         $ \src -> do
               let hdrDecompLen :: Ptr Int32 = castPtr src
@@ -222,24 +234,18 @@ decompressChunk arr dict dsize = do
               decompLen <- peek hdrDecompLen
               srcLen <- peek hdrSrcLen
               (MArray.Array fptr dstBegin dstMax) <-
-                    MArray.newArray
-                        ((fromIntegral :: Int32 -> Int) decompLen)
+                  MArray.newArray ((fromIntegral :: Int32 -> Int) decompLen)
               decompLen1 <-
-                  c_decompressSafeUsingDict
+                  c_decompressSafeContinue
+                      ctx
                       compData
                       dstBegin
                       (coerce srcLen)
                       (coerce decompLen)
-                      dict
-                      ((fromIntegral :: Int -> CInt) dsize)
               assertM (decompLen == coerce decompLen1)
-              copyBytes
-                  dict dstBegin (min (fromIntegral decompLen1) (64 * 1024))
               let dstEnd = dstBegin `plusPtr` fromIntegral decompLen1
                   decompArr = MArray.Array fptr dstEnd dstMax
-              decompArr1 <-
-                    Array.unsafeFreeze <$> MArray.shrinkToFit decompArr
-              return (decompArr1, fromIntegral decompLen1)
+              Array.unsafeFreeze <$> MArray.shrinkToFit decompArr
 
 --------------------------------------------------------------------------------
 -- Compression
@@ -358,10 +364,10 @@ resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
     step _ RDone = return Stream.Stop
 
 {-# ANN type DecompressState Fuse #-}
-data DecompressState buf st dict dsize
+data DecompressState st ctx prev
     = DecompressInit st
-    | DecompressDo st dict dsize
-    | DecompressDone dict
+    | DecompressDo st ctx prev
+    | DecompressDone ctx
 
 -- | See 'decompressResized' for documentation.
 --
@@ -380,17 +386,17 @@ decompressResizedD (Stream.Stream step0 state0) =
     step _ (DecompressInit st) =
         liftIO
             $ do
-                dict <- mallocBytes (64 * 1024) :: IO (Ptr Word8)
-                return $ Stream.Skip $ DecompressDo st dict 0
-    step _ (DecompressDone dict) =
-        liftIO $ free dict >> return Stream.Stop
-    step gst (DecompressDo st dict dsize) = do
+                lz4Ctx <- c_createStreamDecode
+                return $ Stream.Skip $ DecompressDo st lz4Ctx Nothing
+    step _ (DecompressDone lz4Ctx) =
+        liftIO $ c_freeStreamDecode lz4Ctx >> return Stream.Stop
+    step gst (DecompressDo st lz4Ctx prev) = do
         r <- step0 gst st
         case r of
             Stream.Yield arr st1 -> do
-                (arr1, dsize1) <- liftIO $ decompressChunk arr dict dsize
-                return $ Stream.Yield arr1 (DecompressDo st1 dict dsize1)
+                arr1 <- liftIO $ decompressChunk lz4Ctx arr
+                return $ Stream.Yield arr1 (DecompressDo st1 lz4Ctx (Just arr))
             Stream.Skip st1 ->
-                return $ Stream.Skip $ DecompressDo st1 dict dsize
+                return $ Stream.Skip $ DecompressDo st1 lz4Ctx prev
             Stream.Stop ->
-                return $ Stream.Skip $ DecompressDone dict
+                return $ Stream.Skip $ DecompressDone lz4Ctx
