@@ -78,22 +78,24 @@ decompressResizedcompress (i, lst) =
            lst `shouldBe` lst1
 
 decompressCompress :: Int -> (Int, [Array.Array Word8]) -> IO ()
-decompressCompress bufsize (i, lst) = do
+decompressCompress bufsize (i, _) = do
     let tmp = "/tmp/test.lz4.compressed"
     let tmp1 = "/tmp/test.lz4.uncompressed"
 
-    {-
     w1 <- openFile tmp1 ReadMode
-    let s = Stream.unfold Handle.readChunksWithBufferOf (bufsize, w1)
-    lst <- Stream.toList s
+    lst0 <- Stream.toList $ Unicode.decodeLatin1 $ Stream.unfold Handle.read w1
+    putStrLn $ "lst0 len = " ++ show (length lst0)
+    let lst = read lst0
+    putStrLn $ "lst len = " ++ show (length lst)
     hClose w1
-    -}
 
     let strm = Stream.fromList lst
     w <- openFile tmp WriteMode
+    putStrLn "compressing"
     compress i strm & Handle.fromChunks w
     hClose w
 
+    putStrLn "f1"
     f1 <-
         Stream.toList
             $ Stream.bracket_ (openFile tmp ReadMode) hClose
@@ -101,18 +103,22 @@ decompressCompress bufsize (i, lst) = do
                   Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
                 & decompress
                 & ArrayStream.concat
+    putStrLn "f2"
     f2 <-
         Stream.toList
             $ Stream.bracket_ (openFile tmp1 ReadMode) hClose
             $ \h ->
                   Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
                 & ArrayStream.concat
+    putStrLn "f1 /= f2"
     when (f1 /= f2) $ do
+    {-
         w1 <- openFile tmp1 WriteMode
         Handle.fromBytes w1 $ Unicode.encodeLatin1 $ Stream.fromList $ show lst
         hClose w1
+        -}
 
-        putStrLn $ "length arr = " ++ show (length lst)
+        -- putStrLn $ "length arr = " ++ show (length lst)
         putStrLn $ "length = " ++ show (length f1)
         let xx = zipWith3 (\x y z -> if x /= y then Just z else Nothing) f1 f2 [(1::Int)..]
         error $ "decompressCompress failed" ++ show (take 10 (catMaybes xx))
@@ -120,16 +126,19 @@ decompressCompress bufsize (i, lst) = do
 
 main :: IO ()
 main = do
-    large <- generate genArrayW8ListLarge
+    -- large <- generate genArrayW8ListLarge
     hspec
         $ describe "Identity"
         $ do
             -- propsChunk
             -- propsChunk2
             -- propsSimple
+            {-
             forM_ [-1] $ \i ->
                 forM_ [512] $ \bufsize ->
                     propsBig bufsize (i, large)
+                    -}
+            it "decompressCompress" $ decompressCompress 512 (-1, undefined)
 
     where
 
