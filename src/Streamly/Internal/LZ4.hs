@@ -52,7 +52,7 @@ import Data.Coerce (coerce)
 import Data.Int (Int32)
 import Data.Word (Word32, Word8)
 import Foreign.C (CInt(..), CString)
-import Foreign.ForeignPtr (plusForeignPtr, withForeignPtr)
+import Foreign.ForeignPtr (plusForeignPtr, withForeignPtr, touchForeignPtr)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peek, poke)
 import Fusion.Plugin.Types (Fuse (..))
@@ -64,6 +64,7 @@ import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as Array
 import qualified
     Streamly.Internal.Data.Array.Storable.Foreign.Mut.Types as MArray
 import qualified Streamly.Internal.Data.Stream.StreamD as Stream
+import qualified Streamly.Internal.Data.Stream.IsStream as S
 
 --------------------------------------------------------------------------------
 -- CPP helpers
@@ -235,6 +236,7 @@ decompressChunk ctx arr = do
                   hdrSrcLen :: Ptr Int32 = src `plusPtr` 4
                   compData = src `plusPtr` 8
               decompLen <- peek hdrDecompLen
+              -- putStrLn $ "decompLen = " ++ show decompLen
               srcLen <- peek hdrSrcLen
               (MArray.Array fptr dstBegin dstMax) <-
                   MArray.newArray ((fromIntegral :: Int32 -> Int) decompLen)
@@ -248,7 +250,11 @@ decompressChunk ctx arr = do
               assertM (decompLen == coerce decompLen1)
               let dstEnd = dstBegin `plusPtr` fromIntegral decompLen1
                   decompArr = MArray.Array fptr dstEnd dstMax
-              Array.unsafeFreeze <$> MArray.shrinkToFit decompArr
+              -- Array.unsafeFreeze <$> MArray.shrinkToFit decompArr
+              let arr1 = Array.unsafeFreeze decompArr
+              -- s <- S.sum $ Array.toStream arr1
+              -- liftIO $ putStrLn $ "sum = " ++ show s
+              return arr1
 
 --------------------------------------------------------------------------------
 -- Common streaming combinator
@@ -291,6 +297,9 @@ streamWith create destroy process (Stream.Stream step0 state0) =
             Stream.Yield arr st1 -> do
                 arr1 <- process ctx arr
                 -- XXX touch the "prev" array to keep it alive?
+                case prev of
+                    Nothing -> return ()
+                    Just (Array.Array fptr _) -> liftIO $ touchForeignPtr fptr
                 return $ Stream.Yield arr1 (StreamingDo st1 ctx (Just arr))
             Stream.Skip st1 ->
                 return $ Stream.Skip $ StreamingDo st1 ctx prev
@@ -328,6 +337,7 @@ resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
                  $ \b -> do
                        compressedSize <-
                            peek (castPtr (b `plusPtr` 4) :: Ptr Word32)
+                       assertM (compressedSize > 0)
                        let required = fromIntegral compressedSize + 8
                        if len == required
                        then return $ Stream.Skip $ RYield arr $ RInit st
@@ -338,6 +348,13 @@ resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
                                arr1 = Array.Array fb arr1E
                                arr2S = fb `plusForeignPtr` required
                                arr2 = Array.Array arr2S e
+                           assertM (Array.byteLength arr1 == required)
+                           assertM (Array.byteLength arr2 > 0)
+                           -- XXX do a sha256sum and print that
+                           -- liftIO $ putStrLn $ "Emitting array "
+                                -- ++ show (Array.byteLength arr1)
+                           -- s <- S.sum $ Array.toStream arr1
+                           -- liftIO $ putStrLn $ "sum = " ++ show s
                            return $ Stream.Skip $ RYield arr1 $ RProcess st arr2
 
     {-# INLINE [0] step #-}
@@ -357,5 +374,8 @@ resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
                 arr1 <- Array.spliceTwo buf arr
                 liftIO $ process st1 arr1
             Stream.Skip st1 -> return $ Stream.Skip $ RAccumlate st1 buf
-            Stream.Stop -> return $ Stream.Skip $ RYield buf RDone
+            Stream.Stop -> do
+                error $ "resizeD truncated input. accumulated "
+                    ++ show (Array.byteLength buf)
+                -- return $ Stream.Skip $ RYield buf RDone
     step _ RDone = return Stream.Stop

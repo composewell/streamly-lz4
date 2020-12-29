@@ -1,12 +1,13 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main (main) where
 
+import Control.Concurrent (threadDelay)
 import Data.Maybe (catMaybes)
-import Control.Monad (forM_, when)
+import Control.Monad (forM_, when, forever)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Word (Word8)
 import Data.Function ((&))
-import System.IO (IOMode(..), openFile, hClose)
+import System.IO (IOMode(..), openFile, hClose, hFlush, stdout)
 import Test.Hspec (describe, hspec, it, shouldBe)
 import Test.QuickCheck (forAll, property)
 import Test.QuickCheck.Gen
@@ -77,41 +78,46 @@ decompressResizedcompress (i, lst) =
      in do lst1 <- Stream.toList $ decompressResized $ compress i strm
            lst `shouldBe` lst1
 
-decompressCompress :: Int -> (Int, [Array.Array Word8]) -> IO ()
-decompressCompress bufsize (i, _) = do
+-- decompressCompress :: Int -> (Int, [Array.Array Word8]) -> IO ()
+decompressCompress bufsize (i, lst, strm, f2) = do
     let tmp = "/tmp/test.lz4.compressed"
-    let tmp1 = "/tmp/test.lz4.uncompressed"
+    -- let tmp1 = "/tmp/test.lz4.uncompressed"
+    let tmp2 = "/tmp/test.lz4.uncompressed.binary"
 
+{-
     w1 <- openFile tmp1 ReadMode
     lst0 <- Stream.toList $ Unicode.decodeLatin1 $ Stream.unfold Handle.read w1
     putStrLn $ "lst0 len = " ++ show (length lst0)
     let lst = read lst0
     putStrLn $ "lst len = " ++ show (length lst)
     hClose w1
+    -}
 
-    let strm = Stream.fromList lst
+    -- let strm = Stream.fromList lst
+{-
     w <- openFile tmp WriteMode
-    putStrLn "compressing"
+    -- putStrLn "compressing"
     compress i strm & Handle.fromChunks w
     hClose w
+    -}
 
-    putStrLn "f1"
+    -- putStrLn "f1"
+    --f2 <- Stream.toList $ strm & ArrayStream.concat
+    h <- openFile tmp ReadMode
     f1 <-
         Stream.toList
-            $ Stream.bracket_ (openFile tmp ReadMode) hClose
-            $ \h ->
-                  Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
+            -- $ Stream.bracket_ (openFile tmp ReadMode) hClose
+            $ -- \h ->
+                  -- Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
+                  Handle.toChunksWithBufferOf 16 h
+                -- & resize
                 & decompress
+                -- & Stream.mapM (\arr -> threadDelay 1 >> return arr)
                 & ArrayStream.concat
-    putStrLn "f2"
-    f2 <-
-        Stream.toList
-            $ Stream.bracket_ (openFile tmp1 ReadMode) hClose
-            $ \h ->
-                  Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
-                & ArrayStream.concat
-    putStrLn "f1 /= f2"
-    when (f1 /= f2) $ do
+    hClose h
+    -- putStrLn "f2"
+    -- putStrLn "f1 /= f2"
+    if (f1 /= f2) then do
     {-
         w1 <- openFile tmp1 WriteMode
         Handle.fromBytes w1 $ Unicode.encodeLatin1 $ Stream.fromList $ show lst
@@ -121,12 +127,18 @@ decompressCompress bufsize (i, _) = do
         -- putStrLn $ "length arr = " ++ show (length lst)
         putStrLn $ "length = " ++ show (length f1)
         let xx = zipWith3 (\x y z -> if x /= y then Just z else Nothing) f1 f2 [(1::Int)..]
+        let idx = head (catMaybes xx)
+        putStrLn $ "f1 = " ++ show (take 32 (drop idx f1))
+        putStrLn $ "f2 = " ++ show (take 32 (drop idx f2))
         error $ "decompressCompress failed" ++ show (take 10 (catMaybes xx))
+    else
+        putStrLn "success"
     -- f1 `shouldBe` f2
 
 main :: IO ()
 main = do
-    -- large <- generate genArrayW8ListLarge
+{-
+    large <- generate genArrayW8ListLarge
     hspec
         $ describe "Identity"
         $ do
@@ -138,8 +150,29 @@ main = do
                 forM_ [512] $ \bufsize ->
                     propsBig bufsize (i, large)
                     -}
-            it "decompressCompress" $ decompressCompress 512 (-1, undefined)
+            it "decompressCompress" $ do
+            -}
+                let tmp1 = "/tmp/test.lz4.uncompressed"
+                w1 <- openFile tmp1 ReadMode
+                lst0 <- Stream.toList $ Unicode.decodeLatin1 $ Stream.unfold Handle.read w1
+                -- lst0 <- Stream.toList $ Unicode.decodeLatin1 $ Stream.unfold Handle.readWithBufferOf (1, w1)
+                putStrLn $ "lst0 len = " ++ show (length lst0)
+                let lst = read lst0
+                putStrLn $ "lst len = " ++ show (length lst)
+                hClose w1
+                putStrLn $ show $ fmap Array.length lst
+                let strm = Stream.fromList lst
+                f2 <- Stream.toList $ strm & ArrayStream.concat
+                {-
+                let tmp2 = "/tmp/test.lz4.uncompressed.binary"
 
+                w2 <- openFile tmp2 WriteMode
+                Handle.fromChunks w2 (Stream.fromList lst)
+                hClose w2
+                -}
+                forever $ decompressCompress 512 (-1, lst, strm, f2)
+
+{-
     where
 
     propsSimple = do
@@ -176,3 +209,4 @@ main = do
             $ forAll
                   ((,) <$> genAcceleration <*> genArrayW8Large)
                   (\(i, arr) -> decompressCompressChunk i arr)
+                  -}
