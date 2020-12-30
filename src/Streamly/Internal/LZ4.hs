@@ -78,10 +78,9 @@ import qualified Streamly.Internal.Data.Stream.StreamD as Stream
 
 -- Simple helpers for more informative inline statements.
 
--- FIXME
--- #define INLINE_EARLY  INLINE [2]
--- #define INLINE_NORMAL INLINE [1]
--- #define INLINE_LATE   INLINE [0]
+#define INLINE_EARLY  INLINE [2]
+#define INLINE_NORMAL INLINE [1]
+#define INLINE_LATE   INLINE [0]
 
 --------------------------------------------------------------------------------
 -- Foreign
@@ -130,8 +129,7 @@ foreign import ccall unsafe "lz4.h LZ4_decompress_safe_continue"
 --------------------------------------------------------------------------------
 
 -- | See 'debug' for documentation.
-{-# INLINE [1] debugD #-}
--- FIXME: {-# INLINE_NORMAL debugD #-}
+{-# INLINE_NORMAL debugD #-}
 debugD :: MonadIO m
     => Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
@@ -162,8 +160,7 @@ debugD (Stream.Stream step0 state0) = Stream.Stream step (0 :: Int, state0)
                        putStrLn $ "Compressed   : " ++ show compressedSize
                        putStrLn $ "Decompressed : " ++ show decompressedSize
 
-    {-# INLINE [0] step #-}
-    -- FIXME: {-# INLINE_LATE step #-}
+    {-# INLINE_LATE step #-}
     step gst (i, st) = do
         r <- step0 gst st
         case r of
@@ -271,8 +268,7 @@ data CompressState st ctx prev
 -- the stream into 64KB blocks before compression.
 --
 -- | See 'compress' for documentation.
-{-# INLINE [1] compressD #-}
--- FIXME: {-# INLINE_NORMAL compressD #-}
+{-# INLINE_NORMAL compressD #-}
 compressD ::
        MonadIO m
     => Int
@@ -285,8 +281,7 @@ compressD i0 (Stream.Stream step0 state0) =
 
     i = fromIntegral $ max i0 0
 
-    {-# INLINE [0] step #-}
-    -- FIXME: {-# INLINE_LATE step #-}
+    {-# INLINE_LATE step #-}
     step _ (CompressInit st) =
         liftIO
             $ do
@@ -324,8 +319,7 @@ data ResizeState st arr
 
 -- | See 'resize' for documentation.
 --
-{-# INLINE [1] resizeD #-}
--- FIXME: {-# INLINE_NORMAL resizeD #-}
+{-# INLINE_NORMAL resizeD #-}
 resizeD :: MonadIO m =>
     Stream.Stream m (Array.Array Word8) -> Stream.Stream m (Array.Array Word8)
 resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
@@ -353,8 +347,7 @@ resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
                                arr2 = Array.Array arr2S e
                            return $ Stream.Skip $ RYield arr1 $ RProcess st arr2
 
-    {-# INLINE [0] step #-}
-    -- FIXME: {-# INLINE_LATE step #-}
+    {-# INLINE_LATE step #-}
     step _ (RYield r next) = return $ Stream.Yield r next
     step gst (RInit st) = do
         r <- step0 gst st
@@ -381,8 +374,7 @@ data DecompressState st ctx prev
 
 -- | See 'decompressResized' for documentation.
 --
-{-# INLINE [1] decompressResizedD #-}
--- FIXME: {-# INLINE_NORMAL decompressResizedD #-}
+{-# INLINE_NORMAL decompressResizedD #-}
 decompressResizedD :: MonadIO m
        => Stream.Stream m (Array.Array Word8)
        -> Stream.Stream m (Array.Array Word8)
@@ -391,8 +383,7 @@ decompressResizedD (Stream.Stream step0 state0) =
 
    where
 
-    {-# INLINE [0] step #-}
-    -- FIXME: {-# INLINE_LATE step #-}
+    {-# INLINE_LATE step #-}
     step _ (DecompressInit st) =
         liftIO
             $ do
