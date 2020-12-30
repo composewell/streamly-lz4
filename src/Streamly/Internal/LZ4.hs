@@ -18,8 +18,18 @@
 module Streamly.Internal.LZ4
     ( debugD
     , debug
+
+    -- * Foreign
+    , c_createStream
+    , c_freeStream
+    , c_createStreamDecode
+    , c_freeStreamDecode
+
+    -- * Primitives
     , compressChunk
     , decompressChunk
+
+    -- * Streaming
     , compressD
     , resizeD
     , decompressResizedD
@@ -395,8 +405,9 @@ decompressResizedD (Stream.Stream step0 state0) =
         case r of
             Stream.Yield arr st1 -> do
                 arr1 <- liftIO $ decompressChunk lz4Ctx arr
-                return $ Stream.Yield arr1 (DecompressDo st1 lz4Ctx (Just arr))
+                -- Instead of the input array chunk we need to hold the output
+                -- array chunk here.
+                return $ Stream.Yield arr1 (DecompressDo st1 lz4Ctx (Just arr1))
             Stream.Skip st1 ->
                 return $ Stream.Skip $ DecompressDo st1 lz4Ctx prev
-            Stream.Stop ->
-                return $ Stream.Skip $ DecompressDone lz4Ctx
+            Stream.Stop -> return $ Stream.Skip $ DecompressDone lz4Ctx
