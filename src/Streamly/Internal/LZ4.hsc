@@ -1,14 +1,32 @@
-module Streamly.Compression.LZ4
-    ( compressD
-    , resizeD
-    , resize
-    , decompressResizedD
-    , decompressD
-    , compress
-    , decompressResized
-    , decompress
-    , debugD
+-- |
+-- Module      : Streamly.Internal.LZ4
+-- Copyright   : (c) 2020 Composewell Technologies
+--
+-- License     : Apache-2.0
+-- Maintainer  : streamly@composewell.com
+-- Stability   : experimental
+-- Portability : GHC
+--
+-- This module provides all internal combinators required for 'Streamly.LZ4'.
+-- All combinators work with stream of 'A.Array' provided by streamly.
+--
+-- Most of the time, you'll be working with 'Streamly.LZ4'. This is an internal
+-- module and is subject to a lot of change. If you see yourself using functions
+-- from this module a lot please raise an issue so we can properly expose those
+-- functions.
+--
+-- = Programmer Notes
+--
+-- This module also provides some debugging combinators for inspecting the
+-- stream after compression. The debugging only work on streams of resized
+-- arrays.
+--
+module Streamly.Internal.LZ4
+    ( debugD
     , debug
+    , compressD
+    , resizeD
+    , decompressResizedD
     ) where
 
 --------------------------------------------------------------------------------
@@ -24,12 +42,11 @@ import Foreign.Marshal (copyBytes, free, mallocBytes)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peek, poke)
 import Fusion.Plugin.Types (Fuse (..))
+import Streamly.Prelude (SerialT)
 
 import qualified Streamly.Internal.Data.Array.Storable.Foreign.Mut.Types as MA
 import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as A
 import qualified Streamly.Internal.Data.Stream.StreamD as D
-
-import Streamly.Prelude
 
 --------------------------------------------------------------------------------
 -- CPP helpers
@@ -37,7 +54,7 @@ import Streamly.Prelude
 
 -- Simple helpers for more informative inline statements.
 
--- XXX FIXME
+-- FIXME
 -- #define INLINE_EARLY  INLINE [2]
 -- #define INLINE_NORMAL INLINE [1]
 -- #define INLINE_LATE   INLINE [0]
@@ -208,22 +225,6 @@ compressD i0 (D.Stream step0 state0) = D.Stream step (CInit state0)
             D.Skip st1 -> return $ D.Skip $ CProcess st1 strm dict
             D.Stop -> return $ D.Skip $ CCleanup strm dict
 
--- | Compress a stream of foreign arrays (< 2GB / element) using LZ4 stream
--- compression.
---
--- @compress i m@ compresses the stream @m@ using the acceleration value @i@.
---
--- As the acceleration increases, the compression speed increases whereas the
--- compression ratio decreases.
---
-{-# INLINE compress #-}
-compress ::
-       MonadIO m
-    => Int
-    -> SerialT m (A.Array Word8)
-    -> SerialT m (A.Array Word8)
-compress i m = D.fromStreamD (compressD i (D.toStreamD m))
-
 --------------------------------------------------------------------------------
 -- Decompression
 --------------------------------------------------------------------------------
@@ -285,14 +286,6 @@ resizeD (D.Stream step0 state0) = D.Stream step (RInit state0)
             D.Skip st1 -> return $ D.Skip $ RAccumlate st1 buf
             D.Stop -> return $ D.Skip $ RYield buf $ RDone
     step _ RDone = return D.Stop
-
--- | This combinators resizes arrays to the required length. Every element of
--- the resulting stream will be a proper compressed element with 8 bytes of meta
--- data prefixed to it.
---
-{-# INLINE resize #-}
-resize :: MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
-resize m = D.fromStreamD (resizeD (D.toStreamD m))
 
 {-# ANN type DecompressState Fuse #-}
 data DecompressState buf st dict dsize
@@ -358,28 +351,3 @@ decompressResizedD (D.Stream step0 state0) = D.Stream step (DInit state0)
                 return $ D.Yield arr1 (DProcess st1 dict dsize1)
             D.Skip st1 -> return $ D.Skip $ DProcess st1 dict dsize
             D.Stop -> return $ D.Skip $ DCleanup dict
-
--- | See 'decompress' for documentation.
---
-{-# INLINE decompressD #-}
-decompressD ::
-       MonadIO m => D.Stream m (A.Array Word8) -> D.Stream m (A.Array Word8)
-decompressD = decompressResizedD . resizeD
-
--- | This combinator assumes all the arrays in the incoming stream are properly
--- resized.
---
--- This combinator works well with untouched arrays compressed with 'compressD'
--- but a random compressed stream should first be resized properly  with
--- 'resizeD'.
---
-{-# INLINE decompressResized #-}
-decompressResized ::
-       MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
-decompressResized m = D.fromStreamD (decompressResizedD (D.toStreamD m))
-
--- | Decompress a stream of arrays compressed using LZ4 stream compression.
-{-# INLINE decompress #-}
-decompress ::
-       MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
-decompress m = D.fromStreamD (decompressD (D.toStreamD m))

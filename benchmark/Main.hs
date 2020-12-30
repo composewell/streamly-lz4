@@ -5,10 +5,10 @@ import Data.Function ((&))
 import System.IO (IOMode(..), openFile, hClose)
 import System.Directory (getCurrentDirectory)
 
-import qualified Streamly.Compression.LZ4 as Z
 import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as A
 import qualified Streamly.Internal.Data.Stream.IsStream as S
 import qualified Streamly.Internal.FileSystem.Handle as H
+import qualified Streamly.LZ4 as Z
 
 import Gauge.Main
 

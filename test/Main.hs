@@ -15,7 +15,7 @@ import qualified Streamly.Internal.Data.Stream.IsStream as S
 import qualified Streamly.Internal.FileSystem.Handle as H
 import qualified Streamly.Internal.Memory.ArrayStream as AS
 
-import Streamly.Compression.LZ4
+import Streamly.LZ4
 
 cantrbry_alice29_txt :: String -> String
 cantrbry_alice29_txt base = base ++ "cantrbry/alice29.txt"
