@@ -1,107 +1,146 @@
 module Main (main) where
 
+import Control.Monad (forM_)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Word (Word8)
 import Data.Function ((&))
 import System.IO (IOMode(..), openFile, hClose)
-import System.Directory (getCurrentDirectory)
+import System.IO.Temp (withSystemTempFile)
 import Test.Hspec (describe, hspec, it, shouldBe)
 import Test.QuickCheck (Property, forAll, property)
-import Test.QuickCheck.Gen (Gen, choose, chooseAny, listOf)
+import Test.QuickCheck.Gen
+    ( Gen, choose, elements, generate
+    , listOf, vectorOf
+    )
 import Test.QuickCheck.Monadic (monadicIO)
 
-import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as A
-import qualified Streamly.Internal.Data.Stream.IsStream as S
-import qualified Streamly.Internal.FileSystem.Handle as H
-import qualified Streamly.Internal.Memory.ArrayStream as AS
+import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as Array
+import qualified Streamly.Internal.Data.Stream.IsStream as Stream
+import qualified Streamly.Internal.FileSystem.Handle as Handle
 
+import Streamly.Internal.LZ4
 import Streamly.LZ4
 
-cantrbry_alice29_txt :: String -> String
-cantrbry_alice29_txt base = base ++ "cantrbry/alice29.txt"
+genArrayW8List :: Gen [Array.Array Word8]
+genArrayW8List = listOf $ Array.fromList <$> listOf (elements [0,1])
 
-genArrayW8List :: Gen [A.Array Word8]
-genArrayW8List = listOf $ A.fromList <$> listOf chooseAny
+genArrayW8Large :: Gen (Array.Array Word8)
+genArrayW8Large = do
+    let minArr = 1024 * 10
+        maxArr = 1024 * 100
+    arrS <- choose (minArr, maxArr)
+    Array.fromList <$> vectorOf arrS (elements [0,1])
 
-decompressResizedcompressSimple :: Property
-decompressResizedcompressSimple =
-    forAll ((,) <$> genArrayW8List <*> choose (-1, 10))
-        $ \(lst, i) ->
-              let strm = S.fromList lst
-               in monadicIO
-                      $ do
-                          lst1 <- S.toList $ decompressResized $ compress i strm
-                          return $ lst == lst1
+genArrayW8ListLarge :: Gen [Array.Array Word8]
+genArrayW8ListLarge = do
+    sz <- choose (50, 100)
+    vectorOf sz genArrayW8Large
 
-decompressResizedcompress :: String -> Property
-decompressResizedcompress f =
-    forAll (choose (-1, 10))
-        $ \i ->
-              monadicIO
-                  $ liftIO
-                  $ do
-                      let f1Strm =
-                              S.bracket_ (openFile f ReadMode) hClose
-                                  $ \h ->
-                                        S.unfold
-                                            H.readChunksWithBufferOf (300, h)
-                                                & compress i
-                                                & decompressResized
-                                                & AS.concat
-                      f1 <- S.toList f1Strm
-                      f2 <-
-                          S.toList
-                              $ S.bracket_ (openFile f ReadMode) hClose
-                              $ \h -> S.unfold H.read h
-                      f1 `shouldBe` f2
+genAcceleration :: Gen Int
+genAcceleration = elements [-1..12]
 
-decompressCompress :: String -> Property
-decompressCompress f =
-    forAll (choose (-1, 10))
-        $ \i ->
-              monadicIO
-                  $ liftIO
-                  $ do
-                      let tmp = "/tmp/test.lz4"
-                          openers = do
-                              r <- openFile f ReadMode
-                              w <- openFile tmp WriteMode
-                              return (r, w)
-                          closers (r, w) = hClose r >> hClose w
-                      (r, w) <- openers
-                      S.unfold H.readChunksWithBufferOf (300, r)
-                          & compress i
-                          & H.fromChunks w
-                      closers (r, w)
-                      f1 <-
-                          S.toList
-                              $ S.bracket_ (openFile tmp ReadMode) hClose
-                              $ \h ->
-                                    S.unfold H.readChunksWithBufferOf (50, h)
-                                        & decompress
-                                        & AS.concat
-                      f2 <-
-                          S.toList
-                              $ S.bracket_ (openFile f ReadMode) hClose
-                              $ \h -> S.unfold H.read h
-                      f1 `shouldBe` f2
+decompressCompressChunk :: Int -> Array.Array Word8 -> IO ()
+decompressCompressChunk i arr = do
+    lz4Ctx <- c_createStream
+    lz4CtxD <- c_createStreamDecode
+    compressed <- compressChunk i lz4Ctx arr
+    decompressed <- decompressChunk lz4CtxD compressed
+    c_freeStream lz4Ctx
+    c_freeStreamDecode lz4CtxD
+    decompressed `shouldBe` arr
+
+decompressCompressChunk2 ::
+       Int -> Array.Array Word8 -> Array.Array Word8 -> IO ()
+decompressCompressChunk2 i arr1 arr2 = do
+    lz4Ctx <- c_createStream
+    lz4CtxD <- c_createStreamDecode
+    compressed1 <- compressChunk i lz4Ctx arr1
+    compressed2 <- compressChunk i lz4Ctx arr2
+    decompressed1 <- decompressChunk lz4CtxD compressed1
+    decompressed2 <- decompressChunk lz4CtxD compressed2
+    c_freeStream lz4Ctx
+    c_freeStreamDecode lz4CtxD
+    (decompressed1, decompressed2) `shouldBe` (arr1, arr2)
+
+decompressResizedcompress :: Int -> [Array.Array Word8] -> IO ()
+decompressResizedcompress i lst =
+    let strm = Stream.fromList lst
+     in do lst1 <- Stream.toList $ decompressResized $ compress i strm
+           lst `shouldBe` lst1
+
+decompressCompress :: Int -> Int -> [Array.Array Word8] -> IO ()
+decompressCompress bufsize i lst = do
+    let strm = Stream.fromList lst
+    withSystemTempFile "LZ4" $ \tmp tmpH -> do
+        compress i strm & Handle.fromChunks tmpH
+        hClose tmpH
+        lst1 <-
+            Stream.toList
+                $ Stream.bracket_ (openFile tmp ReadMode) hClose
+                $ \h ->
+                      Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
+                          & decompress
+        lst1 `shouldBe` lst
+
+resizeIdempotance :: Property
+resizeIdempotance =
+    forAll ((,) <$> genAcceleration <*> genArrayW8List)
+        $ \(acc, w8List) -> do
+              let strm = compress acc $ Stream.fromList w8List
+              f1 <- Stream.toList $ resize strm
+              f2 <- Stream.toList $ foldr ($) strm $ replicate acc resize
+              f1 `shouldBe` f2
 
 main :: IO ()
 main = do
-    base <- getCurrentDirectory
-    let corpora = base ++ "/corpora/"
-    hspec
-        $ do
-            describe "Identity"
-                $ do
-                    it "decompressResized . compress == id"
-                        $ property $ decompressResizedcompressSimple
-                    it
-                        ("decompressResized . compress == id "
-                             ++ cantrbry_alice29_txt "(" ++ ")")
-                        $ decompressResizedcompress
-                        $ cantrbry_alice29_txt corpora
-                    it
-                        ("decompress . compress == id "
-                             ++ cantrbry_alice29_txt "(" ++ ")")
-                        $ decompressCompress $ cantrbry_alice29_txt corpora
+    large <- generate genArrayW8ListLarge
+    hspec $ do
+        describe "Idempotance" $
+            it "resize" resizeIdempotance
+        describe "Identity" $ do
+            propsChunk
+            propsChunk2
+            propsSimple
+            forM_ [-1, 5, 12, 100]
+                $ \i ->
+                      forM_ [1, 512, 32 * 1024, 256 * 1024]
+                          $ \bufsize -> propsBig bufsize i large
+
+    where
+
+    propsSimple = do
+        it "decompressResized . compress == id"
+            $ property
+            $ forAll
+                  ((,) <$> genAcceleration <*> genArrayW8List)
+                  (monadicIO . liftIO . uncurry decompressResizedcompress)
+        it "decompress . compress == id"
+            $ property
+            $ forAll
+                  ((,) <$> genAcceleration <*> genArrayW8List)
+                  (monadicIO . liftIO . uncurry (decompressCompress 512))
+
+    propsBig bufsize i l = do
+        it ("decompressResized . compress (" ++ show i ++ ") == id (big)")
+            $ decompressResizedcompress i l
+        it
+            ("decompress . compress ("
+                 ++ show i ++ "/" ++ show bufsize ++ ") == id (big)")
+            $ decompressCompress bufsize i l
+
+    propsChunk2 = do
+        it ("decompressChunk . compressChunk (x2) == id (big)")
+            $ property
+            $ forAll
+                  ((,,)
+                       <$> genAcceleration
+                       <*> genArrayW8Large
+                       <*> genArrayW8Large)
+                  (\(i, arr1, arr2) -> decompressCompressChunk2 i arr1 arr2)
+
+    propsChunk = do
+        it ("decompressChunk . compressChunk == id (big)")
+            $ property
+            $ forAll
+                  ((,) <$> genAcceleration <*> genArrayW8Large)
+                  (uncurry decompressCompressChunk)
