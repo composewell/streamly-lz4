@@ -15,12 +15,6 @@
 -- from this module a lot please raise an issue so we can properly expose those
 -- functions.
 --
--- = Programmer Notes
---
--- This module also provides some debugging combinators for inspecting the
--- stream after compression. The debugging only work on streams of resized
--- arrays.
---
 module Streamly.Internal.LZ4
     ( debugD
     , debug
@@ -28,6 +22,20 @@ module Streamly.Internal.LZ4
     , resizeD
     , decompressResizedD
     ) where
+
+
+--------------------------------------------------------------------------------
+-- Developer notes
+--------------------------------------------------------------------------------
+
+-- ## Fusion plugin
+-- The annotations 'Fuse' on the data types don't have have any effect unless
+-- fusion-plugin is enabled.
+--
+-- ## Debugging
+-- This module also provides some debugging combinators for inspecting the
+-- stream after compression. The debugging only work on streams of resized
+-- arrays.
 
 --------------------------------------------------------------------------------
 -- Imports

@@ -11,6 +11,9 @@
 -- compression. Please take a look at <https://github.com/lz4/lz4> to learn
 -- more. All combinators work with stream of 'Array' provided by streamly.
 --
+-- The important combinators are 'compress' and 'decompress'. Their behaviour is
+-- straightforward.
+--
 module Streamly.LZ4
     ( compress
     , resize
@@ -76,6 +79,9 @@ compress i m = fromStreamD (compressD i (toStreamD m))
 -- | This combinators resizes arrays to the required length. Every element of
 -- the resulting stream will be a proper compressed element with 8 bytes of meta
 -- data prefixed to it.
+--
+-- This has the property of idempotence,
+-- @resize . resize = resize@
 --
 {-# INLINE resize #-}
 resize :: MonadIO m => SerialT m (Array Word8) -> SerialT m (Array Word8)
