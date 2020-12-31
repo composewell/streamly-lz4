@@ -26,6 +26,10 @@ let
             let src = "https://github.com/composewell/streamly.git";
                 ref = "master";
             in mkPkgGit super src ref "streamly";
+          fusion-plugin =
+            let src = "https://github.com/composewell/fusion-plugin";
+                ref = "master";
+            in mkPkgGit super src ref "fusion-plugin";
         };
     };
 
