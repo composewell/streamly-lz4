@@ -4,6 +4,7 @@ module Streamly.Compression.LZ4
     , decompressResizedD
     , decompressD
     , compress
+    , decompressResized
     , decompress
     ) where
 
@@ -187,12 +188,7 @@ data DecompressState buf st dict dsize
     | DProcess st dict dsize
     | DCleanup dict
 
--- | This combinator assumes all the arrays in the incoming stream are properly
--- resized.
---
--- This combinator works well with untouched arrays compressed with 'compressD'
--- but a random compressed stream should first be resized properly  with
--- 'resizeD'.
+-- | See 'decompressResized' for documentation.
 --
 decompressResizedD ::
        MonadIO m => D.Stream m (A.Array Word8) -> D.Stream m (A.Array Word8)
@@ -248,6 +244,18 @@ decompressD ::
        MonadIO m => D.Stream m (A.Array Word8) -> D.Stream m (A.Array Word8)
 decompressD = decompressResizedD . resizeD
 
+-- | This combinator assumes all the arrays in the incoming stream are properly
+-- resized.
+--
+-- This combinator works well with untouched arrays compressed with 'compressD'
+-- but a random compressed stream should first be resized properly  with
+-- 'resizeD'.
+--
+decompressResized ::
+       MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
+decompressResized m = D.fromStreamD (decompressResizedD (D.toStreamD m))
+
 -- | Decompress a stream of arrays compressed using LZ4 stream compression.
-decompress :: MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
+decompress ::
+       MonadIO m => SerialT m (A.Array Word8) -> SerialT m (A.Array Word8)
 decompress m = D.fromStreamD (decompressD (D.toStreamD m))
