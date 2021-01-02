@@ -3,12 +3,14 @@ module Main (main) where
 import Data.Word (Word8)
 import Data.Function ((&))
 import Streamly.Internal.Data.Array.Storable.Foreign (Array)
+import Streamly.Internal.Data.Stream.StreamD (fromStreamD, toStreamD)
 import Streamly.Prelude (SerialT)
 import System.IO (IOMode(..), openFile, hClose)
 import System.Directory (getCurrentDirectory)
 
 import qualified Streamly.Internal.Data.Stream.IsStream as Stream
 import qualified Streamly.Internal.FileSystem.Handle as Handle
+import qualified Streamly.Internal.LZ4 as LZ4
 import qualified Streamly.LZ4 as LZ4
 
 import Gauge.Main
@@ -102,7 +104,11 @@ decompressResizedCompress bufsize i prepend =
         bufsize
         ("decompressResized64 . compress " ++ show bufsize)
         prepend
-        (LZ4.decompressResized . LZ4.compress i)
+        (decompressResized . LZ4.compress i)
+
+    where
+
+    decompressResized = fromStreamD . LZ4.decompressResizedD . toStreamD
 
 {-# INLINE decompressCompress #-}
 decompressCompress :: Int -> Int -> (String -> String) -> Benchmark

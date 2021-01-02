@@ -4,6 +4,7 @@ import Control.Monad (forM_)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Word (Word8)
 import Data.Function ((&))
+import Streamly.Internal.Data.Stream.StreamD (fromStreamD, toStreamD)
 import System.IO (IOMode(..), openFile, hClose)
 import System.IO.Temp (withSystemTempFile)
 import Test.Hspec (describe, hspec, it, shouldBe)
@@ -68,6 +69,10 @@ decompressResizedcompress i lst =
      in do lst1 <- Stream.toList $ decompressResized $ compress i strm
            lst `shouldBe` lst1
 
+    where
+
+    decompressResized = fromStreamD . decompressResizedD . toStreamD
+
 decompressCompress :: Int -> Int -> [Array.Array Word8] -> IO ()
 decompressCompress bufsize i lst = do
     let strm = Stream.fromList lst
@@ -90,6 +95,10 @@ resizeIdempotance =
               f1 <- Stream.toList $ resize strm
               f2 <- Stream.toList $ foldr ($) strm $ replicate acc resize
               f1 `shouldBe` f2
+
+    where
+
+    resize = fromStreamD . resizeD . toStreamD
 
 main :: IO ()
 main = do
