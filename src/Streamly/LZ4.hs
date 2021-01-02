@@ -64,6 +64,10 @@ import Streamly.Internal.LZ4
 -- As the acceleration increases, the compression speed increases whereas the
 -- compression ratio decreases.
 --
+-- The foreign array has to be < 2GB as the compression primitives use 32-bit
+-- signed int (CInt) to represent the length of the array. The maximum value of
+-- a 32-bit signed int is 2GB. In fact it is a limitation of the C library as
+-- the foreign function uses 32-bit signed integers.
 {-# INLINE compress #-}
 compress ::
        MonadIO m

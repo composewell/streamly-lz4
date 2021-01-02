@@ -295,10 +295,16 @@ compressD i0 (Stream.Stream step0 state0) =
     step gst (CompressDo st lz4Ctx prev) = do
         r <- step0 gst st
         case r of
-            Stream.Yield arr st1 -> do
-                arr1 <- liftIO $ compressChunk i lz4Ctx arr
-                -- XXX touch the "prev" array to keep it alive?
-                return $ Stream.Yield arr1 (CompressDo st1 lz4Ctx (Just arr))
+            Stream.Yield arr st1 ->
+                -- The compression primitives use 32-bit signed int (CInt) to
+                -- represent the length of the array. The maximum value of a
+                -- 32-bit signed int is 2GB.
+                if Array.byteLength arr >= 2 * 1024 * 1024 * 1024
+                then error "compressD: Array element > 2 GB encountered"
+                else do
+                    arr1 <- liftIO $ compressChunk i lz4Ctx arr
+                    -- XXX touch the "prev" array to keep it alive?
+                    return $ Stream.Yield arr1 (CompressDo st1 lz4Ctx (Just arr))
             Stream.Skip st1 ->
                 return $ Stream.Skip $ CompressDo st1 lz4Ctx prev
             Stream.Stop -> return $ Stream.Skip $ CompressDone lz4Ctx
