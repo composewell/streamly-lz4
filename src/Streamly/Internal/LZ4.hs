@@ -317,7 +317,12 @@ data ResizeState st arr
     | RYield arr (ResizeState st arr)
     | RDone
 
--- | See 'resize' for documentation.
+-- | This combinators resizes arrays to the required length. Every element of
+-- the resulting stream will be a proper compressed element with 8 bytes of meta
+-- data prefixed to it.
+--
+-- This has the property of idempotence,
+-- @resizeD . resizeD = resizeD@
 --
 {-# INLINE_NORMAL resizeD #-}
 resizeD :: MonadIO m =>
@@ -372,7 +377,12 @@ data DecompressState st ctx prev
     | DecompressDo st ctx prev
     | DecompressDone ctx
 
--- | See 'decompressResized' for documentation.
+-- | This combinator assumes all the arrays in the incoming stream are properly
+-- resized.
+--
+-- This combinator works well with untouched arrays compressed with 'compressD'.
+-- A random compressed stream would first need to be resized properly with
+-- 'resizeD'.
 --
 {-# INLINE_NORMAL decompressResizedD #-}
 decompressResizedD :: MonadIO m

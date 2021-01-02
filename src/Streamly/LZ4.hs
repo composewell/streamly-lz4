@@ -16,10 +16,10 @@
 --
 module Streamly.LZ4
     ( compress
-    , resize
-    , decompressResized
     , decompress
-    ) where
+    )
+
+where
 
 --------------------------------------------------------------------------------
 -- Developer notes
@@ -76,31 +76,8 @@ compress i m = fromStreamD (compressD i (toStreamD m))
 -- Decompression
 --------------------------------------------------------------------------------
 
--- | This combinators resizes arrays to the required length. Every element of
--- the resulting stream will be a proper compressed element with 8 bytes of meta
--- data prefixed to it.
---
--- This has the property of idempotence,
--- @resize . resize = resize@
---
-{-# INLINE resize #-}
-resize :: MonadIO m => SerialT m (Array Word8) -> SerialT m (Array Word8)
-resize m = fromStreamD (resizeD (toStreamD m))
-
--- | This combinator assumes all the arrays in the incoming stream are properly
--- resized.
---
--- This combinator works well with untouched arrays compressed with 'compressD'.
--- A random compressed stream would first need to be resized properly with
--- 'resize'.
---
-{-# INLINE decompressResized #-}
-decompressResized ::
-       MonadIO m => SerialT m (Array Word8) -> SerialT m (Array Word8)
-decompressResized m = fromStreamD (decompressResizedD (toStreamD m))
-
 -- | Decompress a stream of arrays compressed using LZ4 stream compression.
 {-# INLINE decompress #-}
 decompress ::
        MonadIO m => SerialT m (Array Word8) -> SerialT m (Array Word8)
-decompress = decompressResized . resize
+decompress = fromStreamD . decompressResizedD . resizeD . toStreamD
