@@ -2,13 +2,14 @@ module Main (main) where
 
 import Data.Word (Word8)
 import Data.Function ((&))
+import Streamly.Internal.Data.Array.Storable.Foreign (Array)
+import Streamly.Prelude (SerialT)
 import System.IO (IOMode(..), openFile, hClose)
 import System.Directory (getCurrentDirectory)
 
-import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as A
-import qualified Streamly.Internal.Data.Stream.IsStream as S
-import qualified Streamly.Internal.FileSystem.Handle as H
-import qualified Streamly.LZ4 as Z
+import qualified Streamly.Internal.Data.Stream.IsStream as Stream
+import qualified Streamly.Internal.FileSystem.Handle as Handle
+import qualified Streamly.LZ4 as LZ4
 
 import Gauge.Main
 
@@ -44,7 +45,7 @@ artificl_aaa_txt base = base ++ "artificl/aaa.txt"
 -- Benchmark helpers
 --------------------------------------------------------------------------------
 
-type Combinator = S.SerialT IO (A.Array Word8) -> S.SerialT IO (A.Array Word8)
+type Combinator = SerialT IO (Array Word8) -> SerialT IO (Array Word8)
 
 {-# INLINE benchCorpus #-}
 benchCorpus :: Int -> String -> (String -> String) -> Combinator -> Benchmark
@@ -55,7 +56,8 @@ benchCorpus bufsize name prepend c =
             base <- getCurrentDirectory
             let corpora = base ++ "/corpora/"
             h <- openFile (prepend corpora) ReadMode
-            S.unfold H.readChunksWithBufferOf (bufsize, h) & c & S.drain
+            Stream.unfold Handle.readChunksWithBufferOf (bufsize, h) & c
+                & Stream.drain
             hClose h
 
 -- You can compare this directly with LZ4 CLI
@@ -70,7 +72,8 @@ benchCorpusWrite bufsize name prepend c =
             let corpora = base ++ "/corpora/"
             r <- openFile (prepend corpora) ReadMode
             w <- openFile "/dev/null" WriteMode
-            S.unfold H.readChunksWithBufferOf (bufsize, r) & c & H.fromChunks w
+            Stream.unfold Handle.readChunksWithBufferOf (bufsize, r) & c
+                & Handle.fromChunks w
             hClose r
             hClose w
 
@@ -81,7 +84,7 @@ benchCorpusWrite bufsize name prepend c =
 {-# INLINE compress #-}
 compress :: Int -> Int -> (String -> String) -> Benchmark
 compress bufsize i prepend =
-    benchCorpus bufsize ("compress " ++ show bufsize) prepend (Z.compress i)
+    benchCorpus bufsize ("compress " ++ show bufsize) prepend (LZ4.compress i)
 
 {-# INLINE compressWrite #-}
 compressWrite :: Int -> Int -> (String -> String) -> Benchmark
@@ -90,7 +93,7 @@ compressWrite bufsize i prepend =
         bufsize
         ("compress (read & write) " ++ show bufsize)
         prepend
-        (Z.compress i)
+        (LZ4.compress i)
 
 {-# INLINE decompressResizedCompress #-}
 decompressResizedCompress :: Int -> Int -> (String -> String) -> Benchmark
@@ -99,7 +102,7 @@ decompressResizedCompress bufsize i prepend =
         bufsize
         ("decompressResized64 . compress " ++ show bufsize)
         prepend
-        (Z.decompressResized . Z.compress i)
+        (LZ4.decompressResized . LZ4.compress i)
 
 {-# INLINE decompressCompress #-}
 decompressCompress :: Int -> Int -> (String -> String) -> Benchmark
@@ -108,7 +111,7 @@ decompressCompress bufsize i prepend =
         bufsize
         ("decompress64 . compress " ++ show bufsize)
         prepend
-        (Z.decompress . Z.compress i)
+        (LZ4.decompress . LZ4.compress i)
 
 --------------------------------------------------------------------------------
 -- Main
