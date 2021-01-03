@@ -22,6 +22,7 @@ import qualified Streamly.Internal.FileSystem.Handle as Handle
 import Streamly.Internal.LZ4
 import Streamly.LZ4
 
+-- Choose only 0 and 1 so that we can get good compressible sequences.
 genArrayW8List :: Gen [Array.Array Word8]
 genArrayW8List = listOf $ Array.fromList <$> listOf (elements [0,1])
 
@@ -87,8 +88,8 @@ decompressCompress bufsize i lst = do
                           & decompress
         lst1 `shouldBe` lst
 
-resizeIdempotance :: Property
-resizeIdempotance =
+resizeIdempotence :: Property
+resizeIdempotence =
     forAll ((,) <$> genAcceleration <*> genArrayW8List)
         $ \(acc, w8List) -> do
               let strm = compress acc $ Stream.fromList w8List
@@ -104,8 +105,8 @@ main :: IO ()
 main = do
     large <- generate genArrayW8ListLarge
     hspec $ do
-        describe "Idempotance" $
-            it "resize" resizeIdempotance
+        describe "Idempotence" $
+            it "resize" resizeIdempotence
         describe "Identity" $ do
             propsChunk
             propsChunk2
@@ -138,7 +139,7 @@ main = do
             $ decompressCompress bufsize i l
 
     propsChunk2 = do
-        it ("decompressChunk . compressChunk (x2) == id (big)")
+        it "decompressChunk . compressChunk (x2) == id (big)"
             $ property
             $ forAll
                   ((,,)
@@ -148,7 +149,7 @@ main = do
                   (\(i, arr1, arr2) -> decompressCompressChunk2 i arr1 arr2)
 
     propsChunk = do
-        it ("decompressChunk . compressChunk == id (big)")
+        it "decompressChunk . compressChunk == id (big)"
             $ property
             $ forAll
                   ((,) <$> genAcceleration <*> genArrayW8Large)
