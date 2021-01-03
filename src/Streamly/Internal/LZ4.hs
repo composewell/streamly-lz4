@@ -7,13 +7,7 @@
 -- Stability   : experimental
 -- Portability : GHC
 --
--- This module provides all internal combinators required for 'Streamly.LZ4'.
--- All combinators work with stream of 'A.Array' provided by streamly.
---
--- Most of the time, you'll be working with 'Streamly.LZ4'. This is an internal
--- module and is subject to a lot of change. If you see yourself using functions
--- from this module a lot please raise an issue so we can properly expose those
--- functions.
+-- Internal module subject to change without notice.
 --
 module Streamly.Internal.LZ4
     ( debugD
@@ -54,6 +48,7 @@ where
 -- Imports
 --------------------------------------------------------------------------------
 
+import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Coerce (coerce)
 import Data.Int (Int32)
@@ -63,8 +58,8 @@ import Foreign.ForeignPtr (plusForeignPtr, withForeignPtr)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peek, poke)
 import Fusion.Plugin.Types (Fuse (..))
-import Streamly.Internal.Control.Exception (assertM)
 import Streamly.Prelude (SerialT)
+import System.IO.Unsafe (unsafePerformIO)
 
 import qualified Streamly.Internal.Data.Array.Storable.Foreign as Array
 import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as Array
@@ -90,15 +85,19 @@ data C_LZ4Stream
 
 data C_LZ4StreamDecode
 
+-- | Exported for unit tests
 foreign import ccall unsafe "lz4.h LZ4_createStream"
     c_createStream :: IO (Ptr C_LZ4Stream)
 
+-- | Exported for unit tests
 foreign import ccall unsafe "lz4.h LZ4_freeStream"
     c_freeStream :: Ptr C_LZ4Stream -> IO ()
 
+-- | Exported for unit tests
 foreign import ccall unsafe "lz4.h LZ4_createStreamDecode"
     c_createStreamDecode :: IO (Ptr C_LZ4StreamDecode)
 
+-- | Exported for unit tests
 foreign import ccall unsafe "lz4.h LZ4_freeStreamDecode"
     c_freeStreamDecode :: Ptr C_LZ4StreamDecode -> IO ()
 
@@ -123,6 +122,13 @@ foreign import ccall unsafe "lz4.h LZ4_decompress_safe_continue"
         -> CInt
         -> CInt
         -> IO CInt
+
+foreign import capi
+    "lz4.h value LZ4_MAX_INPUT_SIZE" lz4_MAX_INPUT_SIZE :: CInt
+
+lz4_MAX_OUTPUT_SIZE :: CInt
+lz4_MAX_OUTPUT_SIZE =
+    min (unsafePerformIO $ c_compressBound lz4_MAX_INPUT_SIZE) maxBound
 
 --------------------------------------------------------------------------------
 -- Debugging
@@ -202,23 +208,39 @@ compressChunk ::
 compressChunk i ctx arr = do
     Array.asPtr arr
         $ \src -> do
-              let srcLen = fromIntegral $ Array.byteLength arr
-              maxCLen <- c_compressBound srcLen
+              let srcLen = Array.byteLength arr
+              -- Ideally the maxCLen check below covers this case, but just in
+              -- case.
+              when (srcLen > (fromIntegral :: CInt -> Int) lz4_MAX_INPUT_SIZE)
+                $ error $ "compressChunk: Source array length " ++ show srcLen
+                    ++ " exceeds the max LZ4 limit " ++ show lz4_MAX_INPUT_SIZE
+              -- The size is safe to downcast
+              let srcLen1 = (fromIntegral :: Int -> CInt) srcLen
+              maxCLen <- c_compressBound srcLen1
+              when (maxCLen <= 0)
+                $ error $ "compressChunk: compressed length <= 0."
+                    ++ " maxCLen: " ++ show maxCLen
+                    ++ " source array length: " ++ show srcLen1
               -- allocate compressed block with 8 byte header.  First 4
               -- bytes of the header store the length of the uncompressed
               -- data and the next 4 bytes store the length of the
               -- compressed data.
               (MArray.Array fptr dstBegin dstMax) <-
                   MArray.newArray (fromIntegral maxCLen + 8)
-              let hdrSrcLen :: Ptr Word32 = castPtr dstBegin
-                  hdrCompLen :: Ptr Word32 = dstBegin `plusPtr` 4
+              let hdrSrcLen :: Ptr Int32 = castPtr dstBegin
+                  hdrCompLen :: Ptr Int32 = dstBegin `plusPtr` 4
                   compData = dstBegin `plusPtr` 8
               compLen <-
                   c_compressFastContinue
-                      ctx src compData srcLen maxCLen (fromIntegral i)
-              poke hdrSrcLen (fromIntegral srcLen)
-              poke hdrCompLen (fromIntegral compLen)
-              let dstEnd = dstBegin `plusPtr` (fromIntegral compLen + 8)
+                      ctx src compData srcLen1 maxCLen (fromIntegral i)
+              when (compLen <= 0)
+                $ error $ "compressChunk: c_compressFastContinue failed. "
+                    ++ "Source array length: " ++ show srcLen1
+                    ++ "Return value: " ++ show compLen
+              poke hdrSrcLen (coerce srcLen1)
+              poke hdrCompLen (coerce compLen)
+              let dstEnd = dstBegin `plusPtr`
+                            ((fromIntegral :: CInt -> Int) compLen + 8)
                   compArr = MArray.Array fptr dstEnd dstMax
               Array.unsafeFreeze <$> MArray.shrinkToFit compArr
 
@@ -238,19 +260,35 @@ decompressChunk ctx arr = do
               let hdrDecompLen :: Ptr Int32 = castPtr src
                   hdrSrcLen :: Ptr Int32 = src `plusPtr` 4
                   compData = src `plusPtr` 8
-              decompLen <- peek hdrDecompLen
-              srcLen <- peek hdrSrcLen
+                  arrDataLen = Array.byteLength arr - 8
+              decompLen <- coerce <$> peek hdrDecompLen
+              srcLen <- coerce <$> peek hdrSrcLen
+
+              -- Error checks
+              if srcLen <= 0
+              then error "decompressChunk: compressed data length > 2GB"
+              else if (fromIntegral :: CInt -> Int) srcLen < arrDataLen
+              then error $ "decompressChunk: input array data length "
+                ++ show arrDataLen ++ " is less than "
+                ++ "the compressed data length specified in the header "
+                ++ show srcLen
+              else when (srcLen > lz4_MAX_OUTPUT_SIZE) $
+                  error $ "decompressChunk: compressed data length is more "
+                    ++ "than the max limit: " ++ show lz4_MAX_OUTPUT_SIZE
+
               (MArray.Array fptr dstBegin dstMax) <-
-                  MArray.newArray ((fromIntegral :: Int32 -> Int) decompLen)
+                  MArray.newArray ((fromIntegral :: CInt -> Int) decompLen)
               decompLen1 <-
                   c_decompressSafeContinue
-                      ctx
-                      compData
-                      dstBegin
-                      (coerce srcLen)
-                      (coerce decompLen)
-              assertM (decompLen == coerce decompLen1)
-              let dstEnd = dstBegin `plusPtr` fromIntegral decompLen1
+                        ctx compData dstBegin srcLen decompLen
+              when (decompLen1 < 0 || decompLen /= decompLen1)
+                $ error $ "decompressChunk: c_decompressSafeContinue failed. "
+                    ++ "arrDataLen = " ++ show arrDataLen
+                    ++ "srcLen = " ++ show srcLen
+                    ++ "decompLen = " ++ show decompLen
+                    ++ "decompLen1 = " ++ show decompLen1
+              let dstEnd = dstBegin `plusPtr`
+                    (fromIntegral :: CInt -> Int) decompLen1
                   decompArr = MArray.Array fptr dstEnd dstMax
               Array.unsafeFreeze <$> MArray.shrinkToFit decompArr
 
@@ -267,7 +305,7 @@ data CompressState st ctx prev
 -- 64KB blocks are optimal as the dictionary max size is 64KB. We can rechunk
 -- the stream into 64KB blocks before compression.
 --
--- | See 'compress' for documentation.
+-- | See 'Streamly.LZ4.compress' for documentation.
 {-# INLINE_NORMAL compressD #-}
 compressD ::
        MonadIO m

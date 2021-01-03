@@ -56,10 +56,12 @@ library
                      , streamly
   ghc-options:         -Wall
   default-language:    Haskell2010
-  default-extensions:  CPP
-                     , EmptyDataDecls
-                     , ForeignFunctionInterface
-                     , ScopedTypeVariables
+  default-extensions:
+      CPP
+      CApiFFI
+      EmptyDataDecls
+      ForeignFunctionInterface
+      ScopedTypeVariables
 
 test-suite test-lz4
   type:                exitcode-stdio-1.0
