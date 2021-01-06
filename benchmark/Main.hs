@@ -1,47 +1,76 @@
 module Main (main) where
 
+import Control.Monad (unless)
+import Data.Semigroup (cycle1)
 import Data.Word (Word8)
 import Data.Function ((&))
 import Streamly.Internal.Data.Array.Storable.Foreign (Array)
 import Streamly.Internal.Data.Stream.StreamD (fromStreamD, toStreamD)
 import Streamly.Prelude (SerialT)
-import System.IO (IOMode(..), openFile, hClose)
-import System.Directory (getCurrentDirectory)
+import System.Directory (getCurrentDirectory, doesFileExist)
 
 import qualified Streamly.Internal.Data.Stream.IsStream as Stream
-import qualified Streamly.Internal.FileSystem.Handle as Handle
+import qualified Streamly.Internal.FileSystem.File as File
 import qualified Streamly.Internal.LZ4 as LZ4
 import qualified Streamly.LZ4 as LZ4
 
 import Gauge.Main
+
+{-# INLINE _64KB #-}
+_64KB :: Int
+_64KB = 64 * 1024
+
+{-# INLINE _10MB #-}
+_10MB :: Int
+_10MB = 10 * 1024 * 1024
 
 --------------------------------------------------------------------------------
 -- Corpora helpers
 --------------------------------------------------------------------------------
 
 {-# INLINE large_bible_txt #-}
-large_bible_txt :: String -> String
-large_bible_txt base = base ++ "large/bible.txt"
+large_bible_txt :: String
+large_bible_txt = "large/bible.txt"
 
 {-# INLINE large_world192_txt #-}
-large_world192_txt :: String -> String
-large_world192_txt base = base ++ "large/world192.txt"
+large_world192_txt :: String
+large_world192_txt = "large/world192.txt"
 
 {-# INLINE cantrbry_alice29_txt #-}
-cantrbry_alice29_txt :: String -> String
-cantrbry_alice29_txt base = base ++ "cantrbry/alice29.txt"
+cantrbry_alice29_txt :: String
+cantrbry_alice29_txt = "cantrbry/alice29.txt"
 
-{-# INLINE cantrbry_kennedy_xls #-}
-cantrbry_kennedy_xls :: String -> String
-cantrbry_kennedy_xls base = base ++ "cantrbry/kennedy.xls"
+--------------------------------------------------------------------------------
+-- Bootstrapping
+--------------------------------------------------------------------------------
 
-{-# INLINE artificl_random_txt #-}
-artificl_random_txt :: String -> String
-artificl_random_txt base = base ++ "artificl/random.txt"
+normalizedName :: String -> String
+normalizedName x = x ++ ".normalized"
 
-{-# INLINE artificl_aaa_txt #-}
-artificl_aaa_txt :: String -> String
-artificl_aaa_txt base = base ++ "artificl/aaa.txt"
+bigCompressedName :: String -> String
+bigCompressedName x = x ++ ".normalized.compressed.big"
+
+smallCompressedName :: String -> String
+smallCompressedName x = x ++ ".normalized.compressed.small"
+
+bootstrap :: String -> IO ()
+bootstrap file = do
+    base <- getCurrentDirectory
+    let fp = base ++ "/corpora/" ++ file
+        normalizedFp = normalizedName fp
+        compressedFpBig = bigCompressedName fp
+        compressedFpSmall = smallCompressedName fp
+    fileExists <- doesFileExist normalizedFp
+    unless fileExists $ do
+        putStrLn $ "Normalizing " ++ fp
+        let fileStream = Stream.unfold File.read fp
+            combinedStream =
+                Stream.arraysOf _64KB
+                    $ Stream.take _10MB
+                    $ cycle1 fileStream
+        combinedStream & File.fromChunks normalizedFp
+        combinedStream & LZ4.compress 65537 & File.fromChunks compressedFpBig
+        combinedStream & LZ4.compress 1 & File.fromChunks compressedFpSmall
 
 --------------------------------------------------------------------------------
 -- Benchmark helpers
@@ -50,100 +79,109 @@ artificl_aaa_txt base = base ++ "artificl/aaa.txt"
 type Combinator = SerialT IO (Array Word8) -> SerialT IO (Array Word8)
 
 {-# INLINE benchCorpus #-}
-benchCorpus :: Int -> String -> (String -> String) -> Combinator -> Benchmark
-benchCorpus bufsize name prepend c =
-    bench (prepend (name ++ "/"))
-        $ nfIO
-        $ do
+benchCorpus :: Int -> String -> String -> Combinator -> Benchmark
+benchCorpus bufsize name corpus combinator =
+    let bname = ("bufsize(" ++ show bufsize ++ ")/" ++ name ++ "/" ++ corpus)
+     in bench bname $ nfIO $ do
             base <- getCurrentDirectory
-            let corpora = base ++ "/corpora/"
-            h <- openFile (prepend corpora) ReadMode
-            Stream.unfold Handle.readChunksWithBufferOf (bufsize, h) & c
+            let file = base ++ "/corpora/" ++ corpus
+            Stream.unfold File.readChunksWithBufferOf (bufsize, file)
+                & combinator
                 & Stream.drain
-            hClose h
-
--- You can compare this directly with LZ4 CLI
-{-# INLINE benchCorpusWrite #-}
-benchCorpusWrite ::
-       Int -> String -> (String -> String) -> Combinator -> Benchmark
-benchCorpusWrite bufsize name prepend c =
-    bench (prepend (name ++ " : "))
-        $ nfIO
-        $ do
-            base <- getCurrentDirectory
-            let corpora = base ++ "/corpora/"
-            r <- openFile (prepend corpora) ReadMode
-            w <- openFile "/dev/null" WriteMode
-            Stream.unfold Handle.readChunksWithBufferOf (bufsize, r) & c
-                & Handle.fromChunks w
-            hClose r
-            hClose w
 
 --------------------------------------------------------------------------------
 -- Benchmarks
 --------------------------------------------------------------------------------
 
 {-# INLINE compress #-}
-compress :: Int -> Int -> (String -> String) -> Benchmark
-compress bufsize i prepend =
-    benchCorpus bufsize ("compress " ++ show bufsize) prepend (LZ4.compress i)
+compress :: Int -> Int -> String -> Benchmark
+compress bufsize i corpus =
+    benchCorpus bufsize ("compress " ++ show i) corpus (LZ4.compress i)
 
-{-# INLINE compressWrite #-}
-compressWrite :: Int -> Int -> (String -> String) -> Benchmark
-compressWrite bufsize i prepend =
-    benchCorpusWrite
-        bufsize
-        ("compress (read & write) " ++ show bufsize)
-        prepend
-        (LZ4.compress i)
+{-# INLINE decompress #-}
+decompress :: Int -> String -> Benchmark
+decompress bufsize corpus =
+    benchCorpus bufsize "decompress" corpus LZ4.decompress
 
-{-# INLINE decompressResizedCompress #-}
-decompressResizedCompress :: Int -> Int -> (String -> String) -> Benchmark
-decompressResizedCompress bufsize i prepend =
-    benchCorpus
-        bufsize
-        ("decompressResized64 . compress " ++ show bufsize)
-        prepend
-        (decompressResized . LZ4.compress i)
-
-    where
-
-    decompressResized = fromStreamD . LZ4.decompressResizedD . toStreamD
-
-{-# INLINE decompressCompress #-}
-decompressCompress :: Int -> Int -> (String -> String) -> Benchmark
-decompressCompress bufsize i prepend =
-    benchCorpus
-        bufsize
-        ("decompress64 . compress " ++ show bufsize)
-        prepend
-        (LZ4.decompress . LZ4.compress i)
+{-# INLINE resize #-}
+resize :: Int -> String -> Benchmark
+resize bufsize corpus =
+    benchCorpus bufsize "resize" corpus (fromStreamD . LZ4.resizeD . toStreamD)
 
 --------------------------------------------------------------------------------
 -- Main
 --------------------------------------------------------------------------------
 
 main :: IO ()
-main = defaultMain [perfGroup 1, perfGroup 12]
+main = do
+    bootstrap large_bible_txt
+    bootstrap large_world192_txt
+    bootstrap cantrbry_alice29_txt
+    defaultMain
+        [ compression_files
+        , decompression_files_big
+        , decompression_files_small
+        , compression_accelaration
+        , compression_buffer
+        , decompression_buffer
+        , resizing_buffer
+        ]
 
     where
 
-    perfGroup i =
-        bgroup ("acceleration value == " ++ show i)
-            $ do
-                func <-
-                    [ compress
-                    , compressWrite
-                    , decompressResizedCompress
-                    , decompressCompress
-                    ]
-                bufsize <- [64, 32000]
-                gen <-
-                    [ cantrbry_alice29_txt
-                    , cantrbry_kennedy_xls
-                    , artificl_aaa_txt
-                    , artificl_random_txt
-                    , large_bible_txt
-                    , large_world192_txt
-                    ]
-                return $ func bufsize i gen
+    compression_files =
+        bgroup
+            "compress/files"
+            [ compress _64KB 5 (normalizedName large_bible_txt)
+            , compress _64KB 5 (normalizedName large_world192_txt)
+            , compress _64KB 5 (normalizedName cantrbry_alice29_txt)
+            ]
+
+    decompression_files_big =
+        bgroup
+            "decompress/files/big"
+            [ decompress _64KB (bigCompressedName large_bible_txt)
+            , decompress _64KB (bigCompressedName large_world192_txt)
+            , decompress _64KB (bigCompressedName cantrbry_alice29_txt)
+            ]
+
+    decompression_files_small =
+        bgroup
+            "decompression/files/small"
+            [ decompress _64KB (smallCompressedName large_bible_txt)
+            , decompress _64KB (smallCompressedName large_world192_txt)
+            , decompress _64KB (smallCompressedName cantrbry_alice29_txt)
+            ]
+
+    compression_accelaration =
+        bgroup
+            "compression/acceleration"
+            [ compress _64KB (-1) (normalizedName large_bible_txt)
+            , compress _64KB 10 (normalizedName large_bible_txt)
+            , compress _64KB 1000  (normalizedName large_bible_txt)
+            , compress _64KB 65537 (normalizedName large_bible_txt)
+            ]
+
+    compression_buffer =
+        bgroup
+            "compression/buffer"
+            [ compress (_64KB `div` 10) 5 (normalizedName large_bible_txt)
+            , compress _64KB 5 (normalizedName large_bible_txt)
+            , compress (_64KB * 10) 5 (normalizedName large_bible_txt)
+            ]
+
+    decompression_buffer =
+        bgroup
+            "decompression/buffer"
+            [ decompress (_64KB `div` 10) (bigCompressedName large_bible_txt)
+            , decompress _64KB (bigCompressedName large_bible_txt)
+            , decompress (_64KB * 10) (bigCompressedName large_bible_txt)
+            ]
+
+    resizing_buffer =
+        bgroup
+            "resizing/buffer"
+            [ resize (_64KB `div` 10) (bigCompressedName large_bible_txt)
+            , resize _64KB (bigCompressedName large_bible_txt)
+            , resize (_64KB * 10) (bigCompressedName large_bible_txt)
+            ]
