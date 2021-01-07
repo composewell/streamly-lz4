@@ -253,19 +253,22 @@ debug m = Stream.fromStreamD (debugD (Stream.toStreamD m))
 -- | Primitive function to compress a chunk of Word8.
 {-# NOINLINE compressChunk #-}
 compressChunk ::
-       Int -> Ptr C_LZ4Stream -> Array.Array Word8 -> IO (Array.Array Word8)
-compressChunk speed ctx arr = do
+       Config
+    -> Int
+    -> Ptr C_LZ4Stream
+    -> Array.Array Word8
+    -> IO (Array.Array Word8)
+compressChunk Config{..} speed ctx arr = do
     Array.asPtr arr
         $ \src -> do
               let uncompLen = Array.byteLength arr
-                  maxUncompLen = cIntToInt lz4_MAX_INPUT_SIZE
                   speedC = intToCInt speed
               -- Ideally the maxCLen check below covers this case, but just in
               -- case.
               when (uncompLen > maxUncompLen)
                 $ error $ "compressChunk: Source array length "
                     ++ show uncompLen
-                    ++ " exceeds the max LZ4 limit "
+                    ++ " exceeds the max LZ4/specified limit "
                     ++ show maxUncompLen
               -- The size is safe to downcast
               let uncompLenC = intToCInt uncompLen
@@ -280,10 +283,9 @@ compressChunk speed ctx arr = do
               -- data and the next 4 bytes store the length of the
               -- compressed data.
               (MArray.Array fptr dstBegin dstMax) <-
-                  MArray.newArray (maxCompLen + 8)
-              let hdrUncompLen = castPtr dstBegin
-                  hdrCompLen = dstBegin `plusPtr` 4
-                  compData = dstBegin `plusPtr` 8
+                  MArray.newArray (maxCompLen + metaLen)
+              let hdrCompLen = dstBegin `plusPtr` compLenOff
+                  compData = dstBegin `plusPtr` compDataOff
               compLenC <-
                   c_compressFastContinue
                       ctx src compData uncompLenC maxCompLenC speedC
@@ -291,12 +293,33 @@ compressChunk speed ctx arr = do
                 $ error $ "compressChunk: c_compressFastContinue failed. "
                     ++ "uncompLenC: " ++ show uncompLenC
                     ++ "compLenC: " ++ show compLenC
-              poke hdrUncompLen (cIntToI32 uncompLenC)
+              encodeUncompLen (castPtr dstBegin) (cIntToI32 uncompLenC)
               poke hdrCompLen (cIntToI32 compLenC)
               let compLen = cIntToInt compLenC
-                  dstEnd = dstBegin `plusPtr` (compLen + 8)
+                  dstEnd = dstBegin `plusPtr` (compLen + metaLen)
                   compArr = MArray.Array fptr dstEnd dstMax
               Array.unsafeFreeze <$> MArray.shrinkToFit compArr
+
+    where
+
+    maxUncompLen = min maxUncompressedSize (cIntToInt lz4_MAX_INPUT_SIZE)
+
+    metaLen =
+        if encodeUncompressedSize
+        then 8
+        else 4
+
+    compLenOff =
+        if encodeUncompressedSize
+        then 4
+        else 0
+
+    compDataOff =
+        if encodeUncompressedSize
+        then 8
+        else 4
+
+    encodeUncompLen arrPtr len = when encodeUncompressedSize $ poke arrPtr len
 
 -- Having NOINLINE here does not effect the performance a lot. Every
 -- iteration of the loop is a little slower (< 1us) but the entire loop
@@ -396,7 +419,7 @@ compressD speed0 (Stream.Stream step0 state0) =
                 if Array.byteLength arr >= 2 * 1024 * 1024 * 1024
                 then error "compressD: Array element > 2 GB encountered"
                 else do
-                    arr1 <- liftIO $ compressChunk speed lz4Ctx arr
+                    arr1 <- liftIO $ compressChunk defaultConfig speed lz4Ctx arr
                     -- XXX touch the "prev" array to keep it alive?
                     return $ Stream.Yield arr1 (CompressDo st1 lz4Ctx (Just arr))
             Stream.Skip st1 ->

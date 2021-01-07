@@ -45,7 +45,7 @@ decompressCompressChunk :: Int -> Array.Array Word8 -> IO ()
 decompressCompressChunk i arr = do
     lz4Ctx <- c_createStream
     lz4CtxD <- c_createStreamDecode
-    compressed <- compressChunk i lz4Ctx arr
+    compressed <- compressChunk defaultConfig i lz4Ctx arr
     decompressed <- decompressChunk lz4CtxD compressed
     c_freeStream lz4Ctx
     c_freeStreamDecode lz4CtxD
@@ -56,8 +56,8 @@ decompressCompressChunk2 ::
 decompressCompressChunk2 i arr1 arr2 = do
     lz4Ctx <- c_createStream
     lz4CtxD <- c_createStreamDecode
-    compressed1 <- compressChunk i lz4Ctx arr1
-    compressed2 <- compressChunk i lz4Ctx arr2
+    compressed1 <- compressChunk defaultConfig i lz4Ctx arr1
+    compressed2 <- compressChunk defaultConfig i lz4Ctx arr2
     decompressed1 <- decompressChunk lz4CtxD compressed1
     decompressed2 <- decompressChunk lz4CtxD compressed2
     c_freeStream lz4Ctx
