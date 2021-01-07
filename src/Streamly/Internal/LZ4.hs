@@ -330,19 +330,21 @@ compressChunk Config{..} speed ctx arr = do
 -- | Primitive function to decompress a chunk of Word8.
 {-# NOINLINE decompressChunk #-}
 decompressChunk ::
-       Ptr C_LZ4StreamDecode -> Array.Array Word8 -> IO (Array.Array Word8)
-decompressChunk ctx arr = do
+       Config
+    -> Ptr C_LZ4StreamDecode
+    -> Array.Array Word8
+    -> IO (Array.Array Word8)
+decompressChunk Config{..} ctx arr = do
     Array.asPtr arr
         $ \src -> do
-              let hdrUncompLen :: Ptr Int32 = castPtr src
-                  hdrCompLen :: Ptr Int32 = src `plusPtr` 4
-                  compData = src `plusPtr` 8
-                  arrDataLen = Array.byteLength arr - 8
-              uncompLenC <- i32ToCInt <$> peek hdrUncompLen
+              let hdrCompLen :: Ptr Int32 = src `plusPtr` compLenOff
+                  compData = src `plusPtr` compDataOff
+                  arrDataLen = Array.byteLength arr - metaLen
+              maxUncompLenC <- getMaxUncompLenC src
               compLenC <- i32ToCInt <$> peek hdrCompLen
               let compLen = cIntToInt compLenC
                   maxCompLenC = lz4_MAX_OUTPUT_SIZE
-                  uncompLen = cIntToInt uncompLenC
+                  maxUncompLen = cIntToInt maxUncompLenC
 
               -- Error checks
               if compLenC <= 0
@@ -356,20 +358,49 @@ decompressChunk ctx arr = do
                   error $ "decompressChunk: compressed data length is more "
                     ++ "than the max limit: " ++ show maxCompLenC
 
-              (MArray.Array fptr dstBegin dstMax) <- MArray.newArray uncompLen
+              (MArray.Array fptr dstBegin dstMax)
+                  <- MArray.newArray maxUncompLen
               decompLenC <-
                   c_decompressSafeContinue
-                        ctx compData dstBegin compLenC uncompLenC
-              when (decompLenC < 0 || uncompLenC /= decompLenC)
+                        ctx compData dstBegin compLenC maxUncompLenC
+              when (decompLenC < 0)
                 $ error $ "decompressChunk: c_decompressSafeContinue failed. "
                     ++ "arrDataLen = " ++ show arrDataLen
                     ++ "compLenC = " ++ show compLenC
-                    ++ "uncompLenC = " ++ show uncompLenC
                     ++ "decompLenC = " ++ show decompLenC
+              checkUncompDecompEq maxUncompLenC decompLenC
               let decompLen = cIntToInt decompLenC
                   dstEnd = dstBegin `plusPtr` decompLen
                   decompArr = MArray.Array fptr dstEnd dstMax
               Array.unsafeFreeze <$> MArray.shrinkToFit decompArr
+
+    where
+
+    metaLen =
+        if encodeUncompressedSize
+        then 8
+        else 4
+
+    compLenOff =
+        if encodeUncompressedSize
+        then 4
+        else 0
+
+    compDataOff =
+        if encodeUncompressedSize
+        then 8
+        else 4
+
+    getMaxUncompLenC arrPtr =
+        if encodeUncompressedSize
+        then i32ToCInt <$> peek arrPtr
+        else return $ intToCInt maxUncompressedSize
+
+    checkUncompDecompEq maxUncompLenC decompLenC =
+        when (encodeUncompressedSize && maxUncompLenC /= decompLenC)
+          $ error $ "decompressChunk: c_decompressSafeContinue failed. "
+              ++ "uncompLenC = " ++ show maxUncompLenC
+              ++ "decompLenC = " ++ show decompLenC
 
 --------------------------------------------------------------------------------
 -- Compression
@@ -528,7 +559,7 @@ decompressResizedD (Stream.Stream step0 state0) =
         r <- step0 gst st
         case r of
             Stream.Yield arr st1 -> do
-                arr1 <- liftIO $ decompressChunk lz4Ctx arr
+                arr1 <- liftIO $ decompressChunk defaultConfig lz4Ctx arr
                 -- Instead of the input array chunk we need to hold the output
                 -- array chunk here.
                 return $ Stream.Yield arr1 (DecompressDo st1 lz4Ctx (Just arr1))

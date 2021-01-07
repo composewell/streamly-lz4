@@ -46,7 +46,7 @@ decompressCompressChunk i arr = do
     lz4Ctx <- c_createStream
     lz4CtxD <- c_createStreamDecode
     compressed <- compressChunk defaultConfig i lz4Ctx arr
-    decompressed <- decompressChunk lz4CtxD compressed
+    decompressed <- decompressChunk defaultConfig lz4CtxD compressed
     c_freeStream lz4Ctx
     c_freeStreamDecode lz4CtxD
     decompressed `shouldBe` arr
@@ -58,8 +58,8 @@ decompressCompressChunk2 i arr1 arr2 = do
     lz4CtxD <- c_createStreamDecode
     compressed1 <- compressChunk defaultConfig i lz4Ctx arr1
     compressed2 <- compressChunk defaultConfig i lz4Ctx arr2
-    decompressed1 <- decompressChunk lz4CtxD compressed1
-    decompressed2 <- decompressChunk lz4CtxD compressed2
+    decompressed1 <- decompressChunk defaultConfig lz4CtxD compressed1
+    decompressed2 <- decompressChunk defaultConfig lz4CtxD compressed2
     c_freeStream lz4Ctx
     c_freeStreamDecode lz4CtxD
     (decompressed1, decompressed2) `shouldBe` (arr1, arr2)
