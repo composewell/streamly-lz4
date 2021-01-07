@@ -432,10 +432,11 @@ data CompressState st ctx prev
 {-# INLINE_NORMAL compressD #-}
 compressD ::
        MonadIO m
-    => Int
+    => Config
+    -> Int
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
-compressD speed0 (Stream.Stream step0 state0) =
+compressD conf speed0 (Stream.Stream step0 state0) =
     Stream.Stream step (CompressInit state0)
 
     where
@@ -463,7 +464,7 @@ compressD speed0 (Stream.Stream step0 state0) =
                 if Array.byteLength arr >= 2 * 1024 * 1024 * 1024
                 then error "compressD: Array element > 2 GB encountered"
                 else do
-                    arr1 <- liftIO $ compressChunk defaultConfig speed lz4Ctx arr
+                    arr1 <- liftIO $ compressChunk conf speed lz4Ctx arr
                     -- XXX touch the "prev" array to keep it alive?
                     return $ Stream.Yield arr1 (CompressDo st1 lz4Ctx (Just arr))
             Stream.Skip st1 ->
@@ -559,10 +560,12 @@ data DecompressState st ctx prev
 -- 'resizeD'.
 --
 {-# INLINE_NORMAL decompressResizedD #-}
-decompressResizedD :: MonadIO m
-       => Stream.Stream m (Array.Array Word8)
-       -> Stream.Stream m (Array.Array Word8)
-decompressResizedD (Stream.Stream step0 state0) =
+decompressResizedD ::
+       MonadIO m
+    => Config
+    -> Stream.Stream m (Array.Array Word8)
+    -> Stream.Stream m (Array.Array Word8)
+decompressResizedD conf (Stream.Stream step0 state0) =
     Stream.Stream step (DecompressInit state0)
 
    where
@@ -579,7 +582,7 @@ decompressResizedD (Stream.Stream step0 state0) =
         r <- step0 gst st
         case r of
             Stream.Yield arr st1 -> do
-                arr1 <- liftIO $ decompressChunk defaultConfig lz4Ctx arr
+                arr1 <- liftIO $ decompressChunk conf lz4Ctx arr
                 -- Instead of the input array chunk we need to hold the output
                 -- array chunk here.
                 return $ Stream.Yield arr1 (DecompressDo st1 lz4Ctx (Just arr1))

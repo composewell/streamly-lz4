@@ -108,7 +108,7 @@ decompressResizedCompress bufsize i prepend =
 
     where
 
-    decompressResized = fromStreamD . LZ4.decompressResizedD . toStreamD
+    decompressResized = fromStreamD . LZ4.decompressResizedD LZ4.defaultConfig . toStreamD
 
 {-# INLINE decompressCompress #-}
 decompressCompress :: Int -> Int -> (String -> String) -> Benchmark

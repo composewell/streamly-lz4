@@ -72,7 +72,8 @@ decompressResizedcompress i lst =
 
     where
 
-    decompressResized = fromStreamD . decompressResizedD . toStreamD
+    decompressResized =
+        fromStreamD . decompressResizedD defaultConfig . toStreamD
 
 decompressCompress :: Int -> Int -> [Array.Array Word8] -> IO ()
 decompressCompress bufsize i lst = do
