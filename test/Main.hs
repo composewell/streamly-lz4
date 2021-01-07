@@ -67,7 +67,8 @@ decompressCompressChunk2 i arr1 arr2 = do
 decompressResizedcompress :: Int -> [Array.Array Word8] -> IO ()
 decompressResizedcompress i lst =
     let strm = Stream.fromList lst
-     in do lst1 <- Stream.toList $ decompressResized $ compress i strm
+     in do lst1 <-
+               Stream.toList $ decompressResized $ compress defaultConfig i strm
            lst `shouldBe` lst1
 
     where
@@ -79,21 +80,21 @@ decompressCompress :: Int -> Int -> [Array.Array Word8] -> IO ()
 decompressCompress bufsize i lst = do
     let strm = Stream.fromList lst
     withSystemTempFile "LZ4" $ \tmp tmpH -> do
-        compress i strm & Handle.fromChunks tmpH
+        compress defaultConfig i strm & Handle.fromChunks tmpH
         hClose tmpH
         lst1 <-
             Stream.toList
                 $ Stream.bracket_ (openFile tmp ReadMode) hClose
                 $ \h ->
                       Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
-                          & decompress
+                          & decompress defaultConfig
         lst1 `shouldBe` lst
 
 resizeIdempotence :: Property
 resizeIdempotence =
     forAll ((,) <$> genAcceleration <*> genArrayW8List)
         $ \(acc, w8List) -> do
-              let strm = compress acc $ Stream.fromList w8List
+              let strm = compress defaultConfig acc $ Stream.fromList w8List
               f1 <- Stream.toList $ resize strm
               f2 <- Stream.toList $ foldr ($) strm $ replicate acc resize
               f1 `shouldBe` f2

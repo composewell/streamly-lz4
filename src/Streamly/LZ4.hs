@@ -10,7 +10,14 @@
 -- decompression.
 --
 module Streamly.LZ4
-    ( compress
+    ( -- * Configuration
+      Config
+    , defaultConfig
+    , setMaxUncompressedSize
+    , setEncodeUncompressedSize
+
+      -- * Combinators
+    , compress
     , decompress
     )
 
@@ -71,10 +78,11 @@ import Streamly.Internal.LZ4
 {-# INLINE compress #-}
 compress ::
        MonadIO m
-    => Int
+    => Config
+    -> Int
     -> SerialT m (Array Word8)
     -> SerialT m (Array Word8)
-compress i m = fromStreamD (compressD defaultConfig i (toStreamD m))
+compress conf i m = fromStreamD (compressD conf i (toStreamD m))
 
 --------------------------------------------------------------------------------
 -- Decompression
@@ -89,7 +97,6 @@ compress i m = fromStreamD (compressD defaultConfig i (toStreamD m))
 -- /Since 0.1.0/
 {-# INLINE decompress #-}
 decompress ::
-       MonadIO m => SerialT m (Array Word8) -> SerialT m (Array Word8)
-decompress =
-    fromStreamD
-        . decompressResizedD defaultConfig . resizeD defaultConfig . toStreamD
+       MonadIO m => Config -> SerialT m (Array Word8) -> SerialT m (Array Word8)
+decompress conf =
+    fromStreamD . decompressResizedD conf . resizeD conf . toStreamD

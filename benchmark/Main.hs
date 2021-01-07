@@ -86,7 +86,11 @@ benchCorpusWrite bufsize name prepend c =
 {-# INLINE compress #-}
 compress :: Int -> Int -> (String -> String) -> Benchmark
 compress bufsize i prepend =
-    benchCorpus bufsize ("compress " ++ show bufsize) prepend (LZ4.compress i)
+    benchCorpus
+        bufsize
+        ("compress " ++ show bufsize)
+        prepend
+        (LZ4.compress LZ4.defaultConfig i)
 
 {-# INLINE compressWrite #-}
 compressWrite :: Int -> Int -> (String -> String) -> Benchmark
@@ -95,7 +99,7 @@ compressWrite bufsize i prepend =
         bufsize
         ("compress (read & write) " ++ show bufsize)
         prepend
-        (LZ4.compress i)
+        (LZ4.compress LZ4.defaultConfig i)
 
 {-# INLINE decompressResizedCompress #-}
 decompressResizedCompress :: Int -> Int -> (String -> String) -> Benchmark
@@ -104,7 +108,7 @@ decompressResizedCompress bufsize i prepend =
         bufsize
         ("decompressResized64 . compress " ++ show bufsize)
         prepend
-        (decompressResized . LZ4.compress i)
+        (decompressResized . LZ4.compress LZ4.defaultConfig i)
 
     where
 
@@ -117,7 +121,7 @@ decompressCompress bufsize i prepend =
         bufsize
         ("decompress64 . compress " ++ show bufsize)
         prepend
-        (LZ4.decompress . LZ4.compress i)
+        (LZ4.decompress LZ4.defaultConfig . LZ4.compress LZ4.defaultConfig i)
 
 --------------------------------------------------------------------------------
 -- Main
