@@ -131,6 +131,30 @@ lz4_MAX_OUTPUT_SIZE =
     min (unsafePerformIO $ c_compressBound lz4_MAX_INPUT_SIZE) maxBound
 
 --------------------------------------------------------------------------------
+-- Conversion helpers
+--------------------------------------------------------------------------------
+
+{-# INLINE cIntToInt #-}
+cIntToInt :: CInt -> Int
+cIntToInt = fromIntegral
+
+{-# INLINE intToCInt #-}
+intToCInt :: Int -> CInt
+intToCInt = fromIntegral
+
+{-# INLINE i32ToInt #-}
+i32ToInt :: Int32 -> Int
+i32ToInt = fromIntegral
+
+{-# INLINE cIntToI32 #-}
+cIntToI32 :: CInt -> Int32
+cIntToI32 = coerce
+
+{-# INLINE i32ToCInt #-}
+i32ToCInt :: Int32 -> CInt
+i32ToCInt = coerce
+
+--------------------------------------------------------------------------------
 -- Debugging
 --------------------------------------------------------------------------------
 
@@ -205,42 +229,47 @@ debug m = Stream.fromStreamD (debugD (Stream.toStreamD m))
 {-# NOINLINE compressChunk #-}
 compressChunk ::
        Int -> Ptr C_LZ4Stream -> Array.Array Word8 -> IO (Array.Array Word8)
-compressChunk i ctx arr = do
+compressChunk speed ctx arr = do
     Array.asPtr arr
         $ \src -> do
-              let srcLen = Array.byteLength arr
+              let uncompLen = Array.byteLength arr
+                  maxUncompLen = cIntToInt lz4_MAX_INPUT_SIZE
+                  speedC = intToCInt speed
               -- Ideally the maxCLen check below covers this case, but just in
               -- case.
-              when (srcLen > (fromIntegral :: CInt -> Int) lz4_MAX_INPUT_SIZE)
-                $ error $ "compressChunk: Source array length " ++ show srcLen
-                    ++ " exceeds the max LZ4 limit " ++ show lz4_MAX_INPUT_SIZE
+              when (uncompLen > maxUncompLen)
+                $ error $ "compressChunk: Source array length "
+                    ++ show uncompLen
+                    ++ " exceeds the max LZ4 limit "
+                    ++ show maxUncompLen
               -- The size is safe to downcast
-              let srcLen1 = (fromIntegral :: Int -> CInt) srcLen
-              maxCLen <- c_compressBound srcLen1
-              when (maxCLen <= 0)
+              let uncompLenC = intToCInt uncompLen
+              maxCompLenC <- c_compressBound uncompLenC
+              let maxCompLen = cIntToInt maxCompLenC
+              when (maxCompLenC <= 0)
                 $ error $ "compressChunk: compressed length <= 0."
-                    ++ " maxCLen: " ++ show maxCLen
-                    ++ " source array length: " ++ show srcLen1
+                    ++ " maxCompLenC: " ++ show maxCompLenC
+                    ++ " uncompLenC: " ++ show uncompLenC
               -- allocate compressed block with 8 byte header.  First 4
               -- bytes of the header store the length of the uncompressed
               -- data and the next 4 bytes store the length of the
               -- compressed data.
               (MArray.Array fptr dstBegin dstMax) <-
-                  MArray.newArray (fromIntegral maxCLen + 8)
-              let hdrSrcLen :: Ptr Int32 = castPtr dstBegin
-                  hdrCompLen :: Ptr Int32 = dstBegin `plusPtr` 4
+                  MArray.newArray (maxCompLen + 8)
+              let hdrUncompLen = castPtr dstBegin
+                  hdrCompLen = dstBegin `plusPtr` 4
                   compData = dstBegin `plusPtr` 8
-              compLen <-
+              compLenC <-
                   c_compressFastContinue
-                      ctx src compData srcLen1 maxCLen (fromIntegral i)
-              when (compLen <= 0)
+                      ctx src compData uncompLenC maxCompLenC speedC
+              when (compLenC <= 0)
                 $ error $ "compressChunk: c_compressFastContinue failed. "
-                    ++ "Source array length: " ++ show srcLen1
-                    ++ "Return value: " ++ show compLen
-              poke hdrSrcLen (coerce srcLen1)
-              poke hdrCompLen (coerce compLen)
-              let dstEnd = dstBegin `plusPtr`
-                            ((fromIntegral :: CInt -> Int) compLen + 8)
+                    ++ "uncompLenC: " ++ show uncompLenC
+                    ++ "compLenC: " ++ show compLenC
+              poke hdrUncompLen (cIntToI32 uncompLenC)
+              poke hdrCompLen (cIntToI32 compLenC)
+              let compLen = cIntToInt compLenC
+                  dstEnd = dstBegin `plusPtr` (compLen + 8)
                   compArr = MArray.Array fptr dstEnd dstMax
               Array.unsafeFreeze <$> MArray.shrinkToFit compArr
 
@@ -257,38 +286,40 @@ decompressChunk ::
 decompressChunk ctx arr = do
     Array.asPtr arr
         $ \src -> do
-              let hdrDecompLen :: Ptr Int32 = castPtr src
-                  hdrSrcLen :: Ptr Int32 = src `plusPtr` 4
+              let hdrUncompLen :: Ptr Int32 = castPtr src
+                  hdrCompLen :: Ptr Int32 = src `plusPtr` 4
                   compData = src `plusPtr` 8
                   arrDataLen = Array.byteLength arr - 8
-              decompLen <- coerce <$> peek hdrDecompLen
-              srcLen <- coerce <$> peek hdrSrcLen
+              uncompLenC <- i32ToCInt <$> peek hdrUncompLen
+              compLenC <- i32ToCInt <$> peek hdrCompLen
+              let compLen = cIntToInt compLenC
+                  maxCompLenC = lz4_MAX_OUTPUT_SIZE
+                  uncompLen = cIntToInt uncompLenC
 
               -- Error checks
-              if srcLen <= 0
+              if compLenC <= 0
               then error "decompressChunk: compressed data length > 2GB"
-              else if (fromIntegral :: CInt -> Int) srcLen < arrDataLen
+              else if compLen < arrDataLen
               then error $ "decompressChunk: input array data length "
                 ++ show arrDataLen ++ " is less than "
                 ++ "the compressed data length specified in the header "
-                ++ show srcLen
-              else when (srcLen > lz4_MAX_OUTPUT_SIZE) $
+                ++ show compLen
+              else when (compLenC > maxCompLenC) $
                   error $ "decompressChunk: compressed data length is more "
-                    ++ "than the max limit: " ++ show lz4_MAX_OUTPUT_SIZE
+                    ++ "than the max limit: " ++ show maxCompLenC
 
-              (MArray.Array fptr dstBegin dstMax) <-
-                  MArray.newArray ((fromIntegral :: CInt -> Int) decompLen)
-              decompLen1 <-
+              (MArray.Array fptr dstBegin dstMax) <- MArray.newArray uncompLen
+              decompLenC <-
                   c_decompressSafeContinue
-                        ctx compData dstBegin srcLen decompLen
-              when (decompLen1 < 0 || decompLen /= decompLen1)
+                        ctx compData dstBegin compLenC uncompLenC
+              when (decompLenC < 0 || uncompLenC /= decompLenC)
                 $ error $ "decompressChunk: c_decompressSafeContinue failed. "
                     ++ "arrDataLen = " ++ show arrDataLen
-                    ++ "srcLen = " ++ show srcLen
-                    ++ "decompLen = " ++ show decompLen
-                    ++ "decompLen1 = " ++ show decompLen1
-              let dstEnd = dstBegin `plusPtr`
-                    (fromIntegral :: CInt -> Int) decompLen1
+                    ++ "compLenC = " ++ show compLenC
+                    ++ "uncompLenC = " ++ show uncompLenC
+                    ++ "decompLenC = " ++ show decompLenC
+              let decompLen = cIntToInt decompLenC
+                  dstEnd = dstBegin `plusPtr` decompLen
                   decompArr = MArray.Array fptr dstEnd dstMax
               Array.unsafeFreeze <$> MArray.shrinkToFit decompArr
 
@@ -312,12 +343,12 @@ compressD ::
     => Int
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
-compressD i0 (Stream.Stream step0 state0) =
+compressD speed0 (Stream.Stream step0 state0) =
     Stream.Stream step (CompressInit state0)
 
     where
 
-    i = fromIntegral $ max i0 0
+    speed = max speed0 0
 
     {-# INLINE_LATE step #-}
     step _ (CompressInit st) =
@@ -340,7 +371,7 @@ compressD i0 (Stream.Stream step0 state0) =
                 if Array.byteLength arr >= 2 * 1024 * 1024 * 1024
                 then error "compressD: Array element > 2 GB encountered"
                 else do
-                    arr1 <- liftIO $ compressChunk i lz4Ctx arr
+                    arr1 <- liftIO $ compressChunk speed lz4Ctx arr
                     -- XXX touch the "prev" array to keep it alive?
                     return $ Stream.Yield arr1 (CompressDo st1 lz4Ctx (Just arr))
             Stream.Skip st1 ->
@@ -382,9 +413,9 @@ resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
         then return $ Stream.Skip $ RAccumlate st arr
         else withForeignPtr fb
                  $ \b -> do
-                       compressedSize <-
-                           peek (castPtr (b `plusPtr` 4) :: Ptr Word32)
-                       let required = fromIntegral compressedSize + 8
+                       let compLenPtr = castPtr (b `plusPtr` 4) :: Ptr Int32
+                       compressedSize <- i32ToInt <$> peek compLenPtr
+                       let required = compressedSize + 8
                        if len == required
                        then return $ Stream.Skip $ RYield arr $ RInit st
                        else if len < required
