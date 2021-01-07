@@ -13,6 +13,12 @@ module Streamly.Internal.LZ4
     ( debugD
     , debug
 
+    -- * Configuration
+    , Config
+    , defaultConfig
+    , setMaxUncompressedSize
+    , setEncodeUncompressedSize
+
     -- * Foreign
     , c_createStream
     , c_freeStream
@@ -153,6 +159,25 @@ cIntToI32 = coerce
 {-# INLINE i32ToCInt #-}
 i32ToCInt :: Int32 -> CInt
 i32ToCInt = coerce
+
+--------------------------------------------------------------------------------
+-- Configuration
+--------------------------------------------------------------------------------
+
+data Config =
+    Config
+        { maxUncompressedSize :: Int
+        , encodeUncompressedSize :: Bool
+        }
+
+defaultConfig :: Config
+defaultConfig = Config (2 * 1024 * 1024 * 1024 - 64) True
+
+setMaxUncompressedSize :: Config -> Int -> Config
+setMaxUncompressedSize c i = c { maxUncompressedSize = i }
+
+setEncodeUncompressedSize :: Config -> Bool -> Config
+setEncodeUncompressedSize c b = c { encodeUncompressedSize = b }
 
 --------------------------------------------------------------------------------
 -- Debugging
