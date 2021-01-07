@@ -99,7 +99,7 @@ resizeIdempotence =
 
     where
 
-    resize = fromStreamD . resizeD . toStreamD
+    resize = fromStreamD . resizeD defaultConfig . toStreamD
 
 main :: IO ()
 main = do

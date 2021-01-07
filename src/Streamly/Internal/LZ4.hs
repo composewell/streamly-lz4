@@ -492,22 +492,29 @@ data ResizeState st arr
 -- @resizeD . resizeD = resizeD@
 --
 {-# INLINE_NORMAL resizeD #-}
-resizeD :: MonadIO m =>
-    Stream.Stream m (Array.Array Word8) -> Stream.Stream m (Array.Array Word8)
-resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
+resizeD ::
+       MonadIO m
+    => Config
+    -> Stream.Stream m (Array.Array Word8)
+    -> Stream.Stream m (Array.Array Word8)
+resizeD conf (Stream.Stream step0 state0) =
+    Stream.Stream step (RInit state0)
 
     where
 
     {-# INLINE process #-}
     process st arr@(Array.Array fb e) = do
         let len = Array.byteLength arr
-        if len <= 8
+            metaLen = metaSize conf
+            compLenOff = compressedLengthOffset conf
+        if len <= metaLen
         then return $ Stream.Skip $ RAccumlate st arr
         else withForeignPtr fb
                  $ \b -> do
-                       let compLenPtr = castPtr (b `plusPtr` 4) :: Ptr Int32
+                       let compLenPtr =
+                               castPtr (b `plusPtr` compLenOff) :: Ptr Int32
                        compressedSize <- i32ToInt <$> peek compLenPtr
-                       let required = compressedSize + 8
+                       let required = compressedSize + metaLen
                        if len == required
                        then return $ Stream.Skip $ RYield arr $ RInit st
                        else if len < required

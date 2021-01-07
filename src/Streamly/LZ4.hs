@@ -90,4 +90,5 @@ compress i m = fromStreamD (compressD i (toStreamD m))
 {-# INLINE decompress #-}
 decompress ::
        MonadIO m => SerialT m (Array Word8) -> SerialT m (Array Word8)
-decompress = fromStreamD . decompressResizedD . resizeD . toStreamD
+decompress =
+    fromStreamD . decompressResizedD . resizeD defaultConfig . toStreamD
