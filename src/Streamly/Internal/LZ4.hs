@@ -180,6 +180,43 @@ setEncodeUncompressedSize :: Config -> Bool -> Config
 setEncodeUncompressedSize c b = c { encodeUncompressedSize = b }
 
 --------------------------------------------------------------------------------
+-- Implementation specific helpers
+--------------------------------------------------------------------------------
+
+-- Block structure:
+-- -|------------+---------------------+--------------|-
+-- -| Serial No. | Name                | Size (bytes) |-
+-- -|------------+---------------------+--------------|-
+-- -|          1 | Uncompressed length |            4 |-
+-- -|          2 | Compressed length   |            4 |-
+-- -|          3 | Data                |     variable |-
+-- -|------------+---------------------+--------------|-
+--
+-- The ordering of the entities will not change but a few entities may not exist
+-- depending on the configuration.
+
+{-# INLINE metaSize #-}
+metaSize :: Config -> Int
+metaSize Config {..} =
+    if encodeUncompressedSize
+    then 8
+    else 4
+
+{-# INLINE compressedLengthOffset #-}
+compressedLengthOffset :: Config -> Int
+compressedLengthOffset Config {..} =
+    if encodeUncompressedSize
+    then 4
+    else 0
+
+{-# INLINE dataOffset #-}
+dataOffset :: Config -> Int
+dataOffset Config {..} =
+    if encodeUncompressedSize
+    then 8
+    else 4
+
+--------------------------------------------------------------------------------
 -- Debugging
 --------------------------------------------------------------------------------
 
@@ -258,7 +295,7 @@ compressChunk ::
     -> Ptr C_LZ4Stream
     -> Array.Array Word8
     -> IO (Array.Array Word8)
-compressChunk Config{..} speed ctx arr = do
+compressChunk conf@Config{..} speed ctx arr = do
     Array.asPtr arr
         $ \src -> do
               let uncompLen = Array.byteLength arr
@@ -303,22 +340,9 @@ compressChunk Config{..} speed ctx arr = do
     where
 
     maxUncompLen = min maxUncompressedSize (cIntToInt lz4_MAX_INPUT_SIZE)
-
-    metaLen =
-        if encodeUncompressedSize
-        then 8
-        else 4
-
-    compLenOff =
-        if encodeUncompressedSize
-        then 4
-        else 0
-
-    compDataOff =
-        if encodeUncompressedSize
-        then 8
-        else 4
-
+    metaLen = metaSize conf
+    compLenOff = compressedLengthOffset conf
+    compDataOff = dataOffset conf
     encodeUncompLen arrPtr len = when encodeUncompressedSize $ poke arrPtr len
 
 -- Having NOINLINE here does not effect the performance a lot. Every
@@ -334,7 +358,7 @@ decompressChunk ::
     -> Ptr C_LZ4StreamDecode
     -> Array.Array Word8
     -> IO (Array.Array Word8)
-decompressChunk Config{..} ctx arr = do
+decompressChunk conf@Config{..} ctx arr = do
     Array.asPtr arr
         $ \src -> do
               let hdrCompLen :: Ptr Int32 = src `plusPtr` compLenOff
@@ -376,20 +400,9 @@ decompressChunk Config{..} ctx arr = do
 
     where
 
-    metaLen =
-        if encodeUncompressedSize
-        then 8
-        else 4
-
-    compLenOff =
-        if encodeUncompressedSize
-        then 4
-        else 0
-
-    compDataOff =
-        if encodeUncompressedSize
-        then 8
-        else 4
+    metaLen = metaSize conf
+    compLenOff = compressedLengthOffset conf
+    compDataOff = dataOffset conf
 
     getMaxUncompLenC arrPtr =
         if encodeUncompressedSize
