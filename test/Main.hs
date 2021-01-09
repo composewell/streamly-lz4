@@ -10,9 +10,7 @@ import System.IO.Temp (withSystemTempFile)
 import Test.Hspec (describe, hspec, it, shouldBe)
 import Test.QuickCheck (Property, forAll, property)
 import Test.QuickCheck.Gen
-    ( Gen, choose, elements, generate
-    , listOf, vectorOf
-    )
+    ( Gen, choose, elements, frequency, generate, listOf, vectorOf )
 import Test.QuickCheck.Monadic (monadicIO)
 
 import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as Array
@@ -33,10 +31,18 @@ genArrayW8Large = do
     arrS <- choose (minArr, maxArr)
     Array.fromList <$> vectorOf arrS (elements [0,1])
 
-genArrayW8ListLarge :: Gen [Array.Array Word8]
-genArrayW8ListLarge = do
+-- HC : Highly compressible
+genArrayW8LargeHC :: Gen (Array.Array Word8)
+genArrayW8LargeHC = do
+    let minArr = 1024 * 10
+        maxArr = 1024 * 100
+    arrS <- choose (minArr, maxArr)
+    Array.fromList <$> vectorOf arrS (frequency [(9, pure 0), (1, pure 1)])
+
+genNonEmptyListWith :: Gen (Array.Array Word8) -> Gen [Array.Array Word8]
+genNonEmptyListWith gen = do
     sz <- choose (50, 100)
-    vectorOf sz genArrayW8Large
+    vectorOf sz gen
 
 genAcceleration :: Gen Int
 genAcceleration = elements [-1..12]
@@ -103,7 +109,8 @@ resizeIdempotence =
 
 main :: IO ()
 main = do
-    large <- generate genArrayW8ListLarge
+    large <- generate $ genNonEmptyListWith genArrayW8Large
+    largeHC <- generate $ genNonEmptyListWith genArrayW8LargeHC
     hspec $ do
         describe "Idempotence" $
             it "resize" resizeIdempotence
@@ -114,7 +121,10 @@ main = do
             forM_ [-1, 5, 12, 100]
                 $ \i ->
                       forM_ [1, 512, 32 * 1024, 256 * 1024]
-                          $ \bufsize -> propsBig bufsize i large
+                          $ \bufsize -> do
+                                propsBig bufsize i large
+                                describe "Highly compressible"
+                                    $ propsBig bufsize i largeHC
 
     where
 
