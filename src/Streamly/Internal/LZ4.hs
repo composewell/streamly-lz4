@@ -242,6 +242,8 @@ compressChunk i ctx arr = do
               let dstEnd = dstBegin `plusPtr`
                             ((fromIntegral :: CInt -> Int) compLen + 8)
                   compArr = MArray.Array fptr dstEnd dstMax
+              -- It is safe to shrink here as we need to hold the last 64KB of
+              -- the previous uncompressed array and not the compressed one.
               Array.unsafeFreeze <$> MArray.shrinkToFit compArr
 
 -- Having NOINLINE here does not effect the performance a lot. Every
@@ -290,7 +292,9 @@ decompressChunk ctx arr = do
               let dstEnd = dstBegin `plusPtr`
                     (fromIntegral :: CInt -> Int) decompLen1
                   decompArr = MArray.Array fptr dstEnd dstMax
-              Array.unsafeFreeze <$> MArray.shrinkToFit decompArr
+              -- We cannot shrink the array here, because that would reallocate
+              -- the array invalidating the cached dictionary.
+              return $ Array.unsafeFreeze decompArr
 
 --------------------------------------------------------------------------------
 -- Compression
