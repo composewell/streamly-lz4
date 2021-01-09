@@ -8,6 +8,7 @@ import Streamly.Internal.Data.Array.Storable.Foreign (Array)
 import Streamly.Internal.Data.Stream.StreamD (fromStreamD, toStreamD)
 import Streamly.Prelude (SerialT)
 import System.Directory (getCurrentDirectory, doesFileExist)
+import System.Environment (lookupEnv)
 
 import qualified Streamly.Internal.Data.Stream.IsStream as Stream
 import qualified Streamly.Internal.FileSystem.File as File
@@ -109,6 +110,60 @@ resize bufsize corpus =
     benchCorpus bufsize "resize" corpus (fromStreamD . LZ4.resizeD . toStreamD)
 
 --------------------------------------------------------------------------------
+-- Reading environment
+--------------------------------------------------------------------------------
+
+-- Environment variables looked up
+-- BENCH_STREAMLY_LZ4_FILE
+-- BENCH_STREAMLY_LZ4_STRATEGY
+-- - c+speed+buffer
+-- - d+buffer
+-- - r+buffer
+--
+-- Example:
+-- > export BENCH_STREAMLY_LZ4_FILE="path/to/file/in/corpora/"
+-- > export BENCH_STREAMLY_LZ4_STRATEGY="c+400+640000"
+-- > cabal bench
+--
+-- The above commands will benchmark file on compression with acceleration value
+-- of 400 and buffer size of 640000
+--
+-- NOTE: The files to be benchmarked should be in the "corpora/" directory.
+
+data Strategy
+    = Compress Int Int
+    | Decompress Int
+    | Resize Int
+
+{-# INLINE parseStrategy #-}
+parseStrategy :: String -> Strategy
+parseStrategy ('c':_:r) =
+    let (speed, pbufsize) = span (/= '+') r
+     in Compress (read speed) (read (tail pbufsize))
+parseStrategy ('d':_:r) = Decompress (read r)
+parseStrategy ('r':_:r) = Resize (read r)
+parseStrategy _ = error "Cannot parse BENCH_STREAMLY_LZ4_STRATEGY"
+
+{-# INLINE runStrategy #-}
+runStrategy :: String -> Strategy -> Benchmark
+runStrategy file (Compress speed bufsize) = compress bufsize speed file
+runStrategy file (Decompress bufsize) = decompress bufsize file
+runStrategy file (Resize bufsize) = resize bufsize file
+
+{-# INLINE tryBenchExternal #-}
+tryBenchExternal :: IO (Maybe Benchmark)
+tryBenchExternal = do
+    fr <- lookupEnv "BENCH_STREAMLY_LZ4_FILE"
+    case fr of
+        Nothing -> return Nothing
+        Just file -> do
+            fs <- lookupEnv "BENCH_STREAMLY_LZ4_STRATEGY"
+            return
+                $ case fs of
+                      Nothing -> Nothing
+                      Just s -> Just $ runStrategy file (parseStrategy s)
+
+--------------------------------------------------------------------------------
 -- Main
 --------------------------------------------------------------------------------
 
@@ -117,7 +172,9 @@ main = do
     bootstrap large_bible_txt
     bootstrap large_world192_txt
     bootstrap cantrbry_alice29_txt
-    defaultMain
+    external <- maybe [] (: []) <$> tryBenchExternal
+    defaultMain $
+        external ++
         [ compression_files
         , decompression_files_big
         , decompression_files_small
