@@ -226,10 +226,10 @@ compressChunk i ctx arr = do
               -- data and the next 4 bytes store the length of the
               -- compressed data.
               (MArray.Array fptr dstBegin dstMax) <-
-                  MArray.newArray (fromIntegral maxCLen + 8)
-              let hdrSrcLen :: Ptr Int32 = castPtr dstBegin
-                  hdrCompLen :: Ptr Int32 = dstBegin `plusPtr` 4
-                  compData = dstBegin `plusPtr` 8
+                  MArray.newArray (fromIntegral maxCLen + 4)
+              let -- hdrSrcLen :: Ptr Int32 = castPtr dstBegin
+                  hdrCompLen :: Ptr Int32 = castPtr dstBegin
+                  compData = dstBegin `plusPtr` 4
               compLen <-
                   c_compressFastContinue
                       ctx src compData srcLen1 maxCLen (fromIntegral i)
@@ -237,10 +237,10 @@ compressChunk i ctx arr = do
                 $ error $ "compressChunk: c_compressFastContinue failed. "
                     ++ "Source array length: " ++ show srcLen1
                     ++ "Return value: " ++ show compLen
-              poke hdrSrcLen (coerce srcLen1)
+              -- poke hdrSrcLen (coerce srcLen1)
               poke hdrCompLen (coerce compLen)
               let dstEnd = dstBegin `plusPtr`
-                            ((fromIntegral :: CInt -> Int) compLen + 8)
+                            ((fromIntegral :: CInt -> Int) compLen + 4)
                   compArr = MArray.Array fptr dstEnd dstMax
               Array.unsafeFreeze <$> MArray.shrinkToFit compArr
 
@@ -257,11 +257,11 @@ decompressChunk ::
 decompressChunk ctx arr = do
     Array.asPtr arr
         $ \src -> do
-              let hdrDecompLen :: Ptr Int32 = castPtr src
-                  hdrSrcLen :: Ptr Int32 = src `plusPtr` 4
-                  compData = src `plusPtr` 8
-                  arrDataLen = Array.byteLength arr - 8
-              decompLen <- coerce <$> peek hdrDecompLen
+              let -- hdrDecompLen :: Ptr Int32 = castPtr src
+                  hdrSrcLen :: Ptr Int32 = src
+                  compData = src `plusPtr` 4
+                  arrDataLen = Array.byteLength arr - 4
+              decompLen <- return $ 1024 * 1024 * 2
               srcLen <- coerce <$> peek hdrSrcLen
 
               -- Error checks
@@ -281,7 +281,7 @@ decompressChunk ctx arr = do
               decompLen1 <-
                   c_decompressSafeContinue
                         ctx compData dstBegin srcLen decompLen
-              when (decompLen1 < 0 || decompLen /= decompLen1)
+              when (decompLen1 < 0) -- || decompLen /= decompLen1)
                 $ error $ "decompressChunk: c_decompressSafeContinue failed. "
                     ++ "arrDataLen = " ++ show arrDataLen
                     ++ "srcLen = " ++ show srcLen
@@ -378,13 +378,13 @@ resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
     {-# INLINE process #-}
     process st arr@(Array.Array fb e) = do
         let len = Array.byteLength arr
-        if len <= 8
+        if len <= 4
         then return $ Stream.Skip $ RAccumlate st arr
         else withForeignPtr fb
                  $ \b -> do
                        compressedSize <-
-                           peek (castPtr (b `plusPtr` 4) :: Ptr Word32)
-                       let required = fromIntegral compressedSize + 8
+                           peek (castPtr b :: Ptr Word32)
+                       let required = fromIntegral compressedSize + 4
                        if len == required
                        then return $ Stream.Skip $ RYield arr $ RInit st
                        else if len < required
