@@ -55,10 +55,8 @@ smallCompressedName :: String -> String
 smallCompressedName x = x ++ ".normalized.compressed.small"
 
 bootstrap :: String -> IO ()
-bootstrap file = do
-    base <- getCurrentDirectory
-    let fp = base ++ "/corpora/" ++ file
-        normalizedFp = normalizedName fp
+bootstrap fp = do
+    let normalizedFp = normalizedName fp
         compressedFpBig = bigCompressedName fp
         compressedFpSmall = smallCompressedName fp
     fileExists <- doesFileExist normalizedFp
@@ -84,9 +82,7 @@ benchCorpus :: Int -> String -> String -> Combinator -> Benchmark
 benchCorpus bufsize name corpus combinator =
     let bname = ("bufsize(" ++ show bufsize ++ ")/" ++ name ++ "/" ++ corpus)
      in bench bname $ nfIO $ do
-            base <- getCurrentDirectory
-            let file = base ++ "/corpora/" ++ corpus
-            Stream.unfold File.readChunksWithBufferOf (bufsize, file)
+            Stream.unfold File.readChunksWithBufferOf (bufsize, corpus)
                 & combinator
                 & Stream.drain
 
@@ -121,14 +117,12 @@ resize bufsize corpus =
 -- - r+buffer
 --
 -- Example:
--- > export BENCH_STREAMLY_LZ4_FILE="path/to/file/in/corpora/"
+-- > export BENCH_STREAMLY_LZ4_FILE="path/to/file/"
 -- > export BENCH_STREAMLY_LZ4_STRATEGY="c+400+640000"
 -- > cabal bench
 --
 -- The above commands will benchmark file on compression with acceleration value
 -- of 400 and buffer size of 640000
---
--- NOTE: The files to be benchmarked should be in the "corpora/" directory.
 
 data Strategy
     = Compress Int Int
@@ -169,76 +163,81 @@ tryBenchExternal = do
 
 main :: IO ()
 main = do
-    bootstrap large_bible_txt
-    bootstrap large_world192_txt
-    bootstrap cantrbry_alice29_txt
+    base <- flip (++) "/corpora/" <$> getCurrentDirectory
+    let rel f = base ++ f
+        relNormalized f = normalizedName (base ++ f)
+        relBigCompressed f = bigCompressedName (base ++ f)
+        relSmallCompressed f = smallCompressedName (base ++ f)
+    bootstrap (rel large_bible_txt)
+    bootstrap (rel large_world192_txt)
+    bootstrap (rel cantrbry_alice29_txt)
     external <- maybe [] (: []) <$> tryBenchExternal
     defaultMain $
         external ++
-        [ compression_files
-        , decompression_files_big
-        , decompression_files_small
-        , compression_accelaration
-        , compression_buffer
-        , decompression_buffer
-        , resizing_buffer
+        [ compression_files relNormalized
+        , decompression_files_big relBigCompressed
+        , decompression_files_small relSmallCompressed
+        , compression_accelaration relNormalized
+        , compression_buffer relNormalized
+        , decompression_buffer relBigCompressed
+        , resizing_buffer relBigCompressed
         ]
 
     where
 
-    compression_files =
+    compression_files f =
         bgroup
             "compress/files"
-            [ compress _64KB 5 (normalizedName large_bible_txt)
-            , compress _64KB 5 (normalizedName large_world192_txt)
-            , compress _64KB 5 (normalizedName cantrbry_alice29_txt)
+            [ compress _64KB 5 (f large_bible_txt)
+            , compress _64KB 5 (f large_world192_txt)
+            , compress _64KB 5 (f cantrbry_alice29_txt)
             ]
 
-    decompression_files_big =
+    decompression_files_big f =
         bgroup
             "decompress/files/big"
-            [ decompress _64KB (bigCompressedName large_bible_txt)
-            , decompress _64KB (bigCompressedName large_world192_txt)
-            , decompress _64KB (bigCompressedName cantrbry_alice29_txt)
+            [ decompress _64KB (f large_bible_txt)
+            , decompress _64KB (f large_world192_txt)
+            , decompress _64KB (f cantrbry_alice29_txt)
             ]
 
-    decompression_files_small =
+    decompression_files_small f =
         bgroup
             "decompression/files/small"
-            [ decompress _64KB (smallCompressedName large_bible_txt)
-            , decompress _64KB (smallCompressedName large_world192_txt)
-            , decompress _64KB (smallCompressedName cantrbry_alice29_txt)
+            [ decompress _64KB (f large_bible_txt)
+            , decompress _64KB (f large_world192_txt)
+            , decompress _64KB (f cantrbry_alice29_txt)
             ]
 
-    compression_accelaration =
+    compression_accelaration f =
         bgroup
             "compression/acceleration"
-            [ compress _64KB (-1) (normalizedName large_bible_txt)
-            , compress _64KB 10 (normalizedName large_bible_txt)
-            , compress _64KB 1000  (normalizedName large_bible_txt)
-            , compress _64KB 65537 (normalizedName large_bible_txt)
+            [ compress _64KB (-1) (f large_bible_txt)
+            , compress _64KB 10 (f large_bible_txt)
+            , compress _64KB 1000  (f large_bible_txt)
+            , compress _64KB 65537 (f large_bible_txt)
             ]
 
-    compression_buffer =
+    compression_buffer f =
         bgroup
             "compression/buffer"
-            [ compress (_64KB `div` 10) 5 (normalizedName large_bible_txt)
-            , compress _64KB 5 (normalizedName large_bible_txt)
-            , compress (_64KB * 10) 5 (normalizedName large_bible_txt)
+            [ compress (_64KB `div` 10) 5 (f large_bible_txt)
+            , compress _64KB 5 (f large_bible_txt)
+            , compress (_64KB * 10) 5 (f large_bible_txt)
             ]
 
-    decompression_buffer =
+    decompression_buffer f =
         bgroup
             "decompression/buffer"
-            [ decompress (_64KB `div` 10) (bigCompressedName large_bible_txt)
-            , decompress _64KB (bigCompressedName large_bible_txt)
-            , decompress (_64KB * 10) (bigCompressedName large_bible_txt)
+            [ decompress (_64KB `div` 10) (f large_bible_txt)
+            , decompress _64KB (f large_bible_txt)
+            , decompress (_64KB * 10) (f large_bible_txt)
             ]
 
-    resizing_buffer =
+    resizing_buffer f =
         bgroup
             "resizing/buffer"
-            [ resize (_64KB `div` 10) (bigCompressedName large_bible_txt)
-            , resize _64KB (bigCompressedName large_bible_txt)
-            , resize (_64KB * 10) (bigCompressedName large_bible_txt)
+            [ resize (_64KB `div` 10) (f large_bible_txt)
+            , resize _64KB (f large_bible_txt)
+            , resize (_64KB * 10) (f large_bible_txt)
             ]
