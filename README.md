@@ -64,3 +64,31 @@ $ cabal run --flag fusion-plugin bench-lz4 -- --quick
 
 You can use `--flag fusion-plugin` to build benchmarks with the
 [fusion-plugin](https://github.com/composewell/fusion-plugin).
+
+### Benchmarking an external corpus
+
+`BENCH_STREAMLY_LZ4_FILE` is looked up for file to benchmark.  This should
+contain the absolute path of the target file.
+
+`BENCH_STREAMLY_LZ4_STRATEGY` is looked up for which benchmarking combinator to
+run on the target file.
+
+It can contain values of the following structure,
+- `c+speed+bufsize`
+- `d+bufsize`
+- `r+bufsize`
+
+`c` corresponds to compress, `d` for decompress and `r` for resizing.
+
+Example,
+```
+$ export BENCH_STREAMLY_LZ4_FILE="path/to/file/"
+$ export BENCH_STREAMLY_LZ4_STRATEGY="c+400+640000"
+$ cabal bench
+```
+
+The commands above will run the compression bench suite on **path/to/file/** with
+the acceleration value of **500** read as arrays of size **640000** bytes.
+
+*Note*: For the decompression and resizing bench suite a compressed file is
+expected as input.
