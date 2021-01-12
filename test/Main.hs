@@ -2,6 +2,8 @@ module Main (main) where
 
 import Control.Monad (forM_)
 import Control.Monad.IO.Class (MonadIO(..))
+import Data.Coerce (coerce)
+import Data.Int (Int32)
 import Data.Word (Word8)
 import Data.Function ((&))
 import Streamly.Internal.Data.Stream.StreamD (fromStreamD, toStreamD)
@@ -19,6 +21,13 @@ import qualified Streamly.Internal.FileSystem.Handle as Handle
 
 import Streamly.Internal.LZ4
 import Streamly.LZ4
+
+unsafeIntToI32 :: Int -> Int32
+unsafeIntToI32 = fromIntegral
+
+-- Choose only 0 and 1 so that we can get good compressible sequences.
+genArrayW8 :: Gen  (Array.Array Word8)
+genArrayW8 = Array.fromList <$> listOf (elements [0,1])
 
 -- Choose only 0 and 1 so that we can get good compressible sequences.
 genArrayW8List :: Gen [Array.Array Word8]
@@ -107,11 +116,35 @@ resizeIdempotence =
 
     resize = fromStreamD . resizeD . toStreamD
 
+addUncompressedHeader :: Array.Array Word8 -> IO (Array.Array Word8)
+addUncompressedHeader arr = do
+    let negLen = -1 * unsafeIntToI32 (Array.byteLength arr)
+        hdr = Array.fromList [negLen, negLen]
+    Array.spliceTwo (coerce hdr) arr
+
+testUncompressedBit :: Int -> [Array.Array Word8] -> Array.Array Word8 -> IO ()
+testUncompressedBit acc arrList arr = do
+    arrHead <- addUncompressedHeader arr
+    l1 <-
+        Stream.fromList arrList
+            & compress acc
+            & Stream.intersperse arrHead
+            & decompress
+            & Stream.toList
+    l2 <- Stream.fromList arrList & Stream.intersperse arr & Stream.toList
+    l1 `shouldBe` l2
+
 main :: IO ()
 main = do
     large <- generate $ genNonEmptyListWith genArrayW8Large
     largeHC <- generate $ genNonEmptyListWith genArrayW8LargeHC
+    uncompBitW8 <- generate genArrayW8
     hspec $ do
+        describe "Uncompressed bit tests" $ do
+            propsUncompressedBit
+            it
+                "compress . intersperse . decompress == intersperse (big)"
+                (testUncompressedBit 1 largeHC uncompBitW8)
         describe "Idempotence" $
             it "resize" resizeIdempotence
         describe "Identity" $ do
@@ -127,6 +160,13 @@ main = do
                                     $ propsBig bufsize i largeHC
 
     where
+
+    propsUncompressedBit = do
+        it "compress . intersperse . decompress == intersperse"
+            $ property
+            $ forAll
+                  ((,,) <$> genAcceleration <*> genArrayW8List <*> genArrayW8)
+                  (\(a, ls, l) -> testUncompressedBit a ls l)
 
     propsSimple = do
         it "decompressResized . compress == id"

@@ -418,7 +418,7 @@ resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
         else withForeignPtr fb
                  $ \b -> do
                        let compLenPtr = castPtr (b `plusPtr` 4) :: Ptr Int32
-                       compressedSize <- i32ToInt <$> peek compLenPtr
+                       compressedSize <- abs . i32ToInt <$> peek compLenPtr
                        let required = compressedSize + 8
                        if len == required
                        then return $ Stream.Skip $ RYield arr $ RInit st
@@ -484,6 +484,15 @@ decompressResizedD (Stream.Stream step0 state0) =
         r <- step0 gst st
         case r of
             Stream.Yield arr st1 -> do
+              compLen32 <-
+                  liftIO $ Array.asPtr arr $ \src ->
+                      peek (castPtr src `plusPtr` 4 :: Ptr Int32)
+              if compLen32 <= 0
+              then do
+                let (Array.Array fptr end) = arr
+                    arr1 = Array.Array (fptr `plusForeignPtr` 8) end
+                return $ Stream.Yield arr1 (DecompressDo st1 lz4Ctx prev)
+              else do
                 arr1 <- liftIO $ decompressChunk lz4Ctx arr
                 -- Instead of the input array chunk we need to hold the output
                 -- array chunk here.
