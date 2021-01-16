@@ -47,65 +47,66 @@ genNonEmptyListWith gen = do
 genAcceleration :: Gen Int
 genAcceleration = elements [-1..12]
 
-decompressCompressChunk :: Int -> Array.Array Word8 -> IO ()
-decompressCompressChunk i arr = do
+decompressCompressChunk :: Config a -> Int -> Array.Array Word8 -> IO ()
+decompressCompressChunk conf i arr = do
     lz4Ctx <- c_createStream
     lz4CtxD <- c_createStreamDecode
-    compressed <- compressChunk i lz4Ctx arr
-    decompressed <- decompressChunk lz4CtxD compressed
+    compressed <- compressChunk conf i lz4Ctx arr
+    decompressed <- decompressChunk conf lz4CtxD compressed
     c_freeStream lz4Ctx
     c_freeStreamDecode lz4CtxD
     decompressed `shouldBe` arr
 
 decompressCompressChunk2 ::
-       Int -> Array.Array Word8 -> Array.Array Word8 -> IO ()
-decompressCompressChunk2 i arr1 arr2 = do
+       Config a -> Int -> Array.Array Word8 -> Array.Array Word8 -> IO ()
+decompressCompressChunk2 conf i arr1 arr2 = do
     lz4Ctx <- c_createStream
     lz4CtxD <- c_createStreamDecode
-    compressed1 <- compressChunk i lz4Ctx arr1
-    compressed2 <- compressChunk i lz4Ctx arr2
-    decompressed1 <- decompressChunk lz4CtxD compressed1
-    decompressed2 <- decompressChunk lz4CtxD compressed2
+    compressed1 <- compressChunk conf i lz4Ctx arr1
+    compressed2 <- compressChunk conf i lz4Ctx arr2
+    decompressed1 <- decompressChunk conf lz4CtxD compressed1
+    decompressed2 <- decompressChunk conf lz4CtxD compressed2
     c_freeStream lz4Ctx
     c_freeStreamDecode lz4CtxD
     (decompressed1, decompressed2) `shouldBe` (arr1, arr2)
 
-decompressResizedcompress :: Int -> [Array.Array Word8] -> IO ()
-decompressResizedcompress i lst =
+decompressResizedcompress :: Config a -> Int -> [Array.Array Word8] -> IO ()
+decompressResizedcompress conf i lst =
     let strm = Stream.fromList lst
-     in do lst1 <- Stream.toList $ decompressResized $ compress i strm
+     in do lst1 <- Stream.toList $ decompressResized $ compress conf i strm
            lst `shouldBe` lst1
 
     where
 
-    decompressResized = fromStreamD . decompressResizedD . toStreamD
+    decompressResized =
+        fromStreamD . decompressResizedD conf . toStreamD
 
-decompressCompress :: Int -> Int -> [Array.Array Word8] -> IO ()
-decompressCompress bufsize i lst = do
+decompressCompress :: Config a -> Int -> Int -> [Array.Array Word8] -> IO ()
+decompressCompress conf bufsize i lst = do
     let strm = Stream.fromList lst
     withSystemTempFile "LZ4" $ \tmp tmpH -> do
-        compress i strm & Handle.fromChunks tmpH
+        compress conf i strm & Handle.fromChunks tmpH
         hClose tmpH
         lst1 <-
             Stream.toList
                 $ Stream.bracket_ (openFile tmp ReadMode) hClose
                 $ \h ->
                       Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
-                          & decompress
+                          & decompress conf
         lst1 `shouldBe` lst
 
-resizeIdempotence :: Property
-resizeIdempotence =
+resizeIdempotence :: Config a -> Property
+resizeIdempotence conf  =
     forAll ((,) <$> genAcceleration <*> genArrayW8List)
         $ \(acc, w8List) -> do
-              let strm = compress acc $ Stream.fromList w8List
+              let strm = compress conf acc $ Stream.fromList w8List
               f1 <- Stream.toList $ resize strm
               f2 <- Stream.toList $ foldr ($) strm $ replicate acc resize
               f1 `shouldBe` f2
 
     where
 
-    resize = fromStreamD . resizeD . toStreamD
+    resize = fromStreamD . resizeD conf . toStreamD
 
 main :: IO ()
 main = do
@@ -113,42 +114,47 @@ main = do
     largeHC <- generate $ genNonEmptyListWith genArrayW8LargeHC
     hspec $ do
         describe "Idempotence" $
-            it "resize" resizeIdempotence
+            it "resize" (resizeIdempotence defaultConfig)
         describe "Identity" $ do
-            propsChunk
-            propsChunk2
-            propsSimple
+            propsChunk defaultConfig
+            propsChunk2 defaultConfig
+            propsSimple defaultConfig
             forM_ [-1, 5, 12, 100]
                 $ \i ->
                       forM_ [1, 512, 32 * 1024, 256 * 1024]
                           $ \bufsize -> do
-                                propsBig bufsize i large
+                                propsBig defaultConfig bufsize i large
                                 describe "Highly compressible"
-                                    $ propsBig bufsize i largeHC
+                                    $ propsBig defaultConfig bufsize i largeHC
+            describe "removeUncompressedSize (1024 * 100) defaultConfig" $ do
+                let config = removeUncompressedSize (1024 * 100) defaultConfig
+                propsChunk config
+                propsChunk2 config
+                propsBig config 512 5 largeHC
 
     where
 
-    propsSimple = do
+    propsSimple conf = do
         it "decompressResized . compress == id"
             $ property
             $ forAll
                   ((,) <$> genAcceleration <*> genArrayW8List)
-                  (monadicIO . liftIO . uncurry decompressResizedcompress)
+                  (monadicIO . liftIO . uncurry (decompressResizedcompress conf))
         it "decompress . compress == id"
             $ property
             $ forAll
                   ((,) <$> genAcceleration <*> genArrayW8List)
-                  (monadicIO . liftIO . uncurry (decompressCompress 512))
+                  (monadicIO . liftIO . uncurry (decompressCompress conf 512))
 
-    propsBig bufsize i l = do
+    propsBig conf bufsize i l = do
         it ("decompressResized . compress (" ++ show i ++ ") == id (big)")
-            $ decompressResizedcompress i l
+            $ decompressResizedcompress conf i l
         it
             ("decompress . compress ("
                  ++ show i ++ "/" ++ show bufsize ++ ") == id (big)")
-            $ decompressCompress bufsize i l
+            $ decompressCompress conf bufsize i l
 
-    propsChunk2 = do
+    propsChunk2 conf = do
         it "decompressChunk . compressChunk (x2) == id (big)"
             $ property
             $ forAll
@@ -156,11 +162,11 @@ main = do
                        <$> genAcceleration
                        <*> genArrayW8Large
                        <*> genArrayW8Large)
-                  (\(i, arr1, arr2) -> decompressCompressChunk2 i arr1 arr2)
+                  (\(i, arr1, arr2) -> decompressCompressChunk2 conf i arr1 arr2)
 
-    propsChunk = do
+    propsChunk conf = do
         it "decompressChunk . compressChunk == id (big)"
             $ property
             $ forAll
                   ((,) <$> genAcceleration <*> genArrayW8Large)
-                  (uncurry decompressCompressChunk)
+                  (uncurry (decompressCompressChunk conf))
