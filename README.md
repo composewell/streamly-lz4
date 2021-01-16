@@ -47,6 +47,9 @@ extra-deps:
 ...
 ```
 
+Setting configuration options requires the `TypeInType` language extension to be
+enabled.
+
 ## Running benchmarks
 
 Benchmarks use corpora provided by the canterbury corpus

@@ -10,7 +10,17 @@
 -- decompression.
 --
 module Streamly.LZ4
-    ( compress
+    (
+    -- * Configuration
+      Config
+    , defaultConfig
+    , addUncompressedSize
+    , removeUncompressedSize
+    , addChecksum
+    , removeChecksum
+
+    -- * Combinators
+    , compress
     , decompress
     )
 
@@ -23,9 +33,8 @@ where
 -- If you look at LZ4 as a black box, the idea behind this library is very
 -- simple.
 --
--- During compression, all array elements are compressed and prefixed with 8
--- bytes of meta data. 4 bytes for the compressed size 4 bytes for the
--- decompressed.
+-- During compression, all array elements are compressed and prefixed with meta
+-- data. This meta data depends on your configuration.
 --
 -- If the compressed stream is ever saved to file then this meta data behaves
 -- like array boundaries. 'resize' uses this meta data to create a stream that
@@ -44,6 +53,7 @@ import Streamly.Internal.Data.Array.Storable.Foreign (Array)
 import Streamly.Internal.Data.Stream.StreamD (fromStreamD, toStreamD)
 import Streamly.Prelude (SerialT)
 
+import Streamly.Internal.LZ4.Config
 import Streamly.Internal.LZ4
 
 --------------------------------------------------------------------------------
@@ -71,10 +81,11 @@ import Streamly.Internal.LZ4
 {-# INLINE compress #-}
 compress ::
        MonadIO m
-    => Int
+    => Config a
+    -> Int
     -> SerialT m (Array Word8)
     -> SerialT m (Array Word8)
-compress i m = fromStreamD (compressD i (toStreamD m))
+compress c i m = fromStreamD (compressD c i (toStreamD m))
 
 --------------------------------------------------------------------------------
 -- Decompression
@@ -89,5 +100,8 @@ compress i m = fromStreamD (compressD i (toStreamD m))
 -- /Since 0.1.0/
 {-# INLINE decompress #-}
 decompress ::
-       MonadIO m => SerialT m (Array Word8) -> SerialT m (Array Word8)
-decompress = fromStreamD . decompressResizedD . resizeD . toStreamD
+       MonadIO m
+    => Config a
+    -> SerialT m (Array Word8)
+    -> SerialT m (Array Word8)
+decompress c = fromStreamD . decompressResizedD c . resizeD c . toStreamD

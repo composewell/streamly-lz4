@@ -68,8 +68,10 @@ bootstrap fp = do
                     $ Stream.take _10MB
                     $ cycle1 fileStream
         combinedStream & File.fromChunks normalizedFp
-        combinedStream & LZ4.compress 65537 & File.fromChunks compressedFpBig
-        combinedStream & LZ4.compress 1 & File.fromChunks compressedFpSmall
+        combinedStream & LZ4.compress LZ4.defaultConfig 65537
+                       & File.fromChunks compressedFpBig
+        combinedStream & LZ4.compress LZ4.defaultConfig 1
+                       & File.fromChunks compressedFpSmall
 
 --------------------------------------------------------------------------------
 -- Benchmark helpers
@@ -93,17 +95,20 @@ benchCorpus bufsize name corpus combinator =
 {-# INLINE compress #-}
 compress :: Int -> Int -> String -> Benchmark
 compress bufsize i corpus =
-    benchCorpus bufsize ("compress " ++ show i) corpus (LZ4.compress i)
+    benchCorpus bufsize ("compress " ++ show i) corpus
+        $ LZ4.compress LZ4.defaultConfig i
 
 {-# INLINE decompress #-}
 decompress :: Int -> String -> Benchmark
 decompress bufsize corpus =
-    benchCorpus bufsize "decompress" corpus LZ4.decompress
+    benchCorpus bufsize "decompress" corpus
+        $ LZ4.decompress LZ4.defaultConfig
 
 {-# INLINE resize #-}
 resize :: Int -> String -> Benchmark
 resize bufsize corpus =
-    benchCorpus bufsize "resize" corpus (fromStreamD . LZ4.resizeD . toStreamD)
+    benchCorpus bufsize "resize" corpus
+        $ fromStreamD . LZ4.resizeD LZ4.defaultConfig . toStreamD
 
 --------------------------------------------------------------------------------
 -- Reading environment

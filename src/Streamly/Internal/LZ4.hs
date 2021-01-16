@@ -11,8 +11,16 @@
 --
 module Streamly.Internal.LZ4
     (
+    -- * Configuration
+      Config
+    , defaultConfig
+    , addUncompressedSize
+    , removeUncompressedSize
+    , addChecksum
+    , removeChecksum
+
     -- * Foreign
-      c_createStream
+    , c_createStream
     , c_freeStream
     , c_createStreamDecode
     , c_freeStreamDecode
@@ -63,6 +71,8 @@ import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as Array
 import qualified
     Streamly.Internal.Data.Array.Storable.Foreign.Mut.Types as MArray
 import qualified Streamly.Internal.Data.Stream.StreamD as Stream
+
+import Streamly.Internal.LZ4.Config
 
 --------------------------------------------------------------------------------
 -- CPP helpers
@@ -167,8 +177,12 @@ i32ToCInt = coerce
 -- | Primitive function to compress a chunk of Word8.
 {-# NOINLINE compressChunk #-}
 compressChunk ::
-       Int -> Ptr C_LZ4Stream -> Array.Array Word8 -> IO (Array.Array Word8)
-compressChunk speed ctx arr = do
+       Config a
+    -> Int
+    -> Ptr C_LZ4Stream
+    -> Array.Array Word8
+    -> IO (Array.Array Word8)
+compressChunk Config{..} speed ctx arr = do
     Array.asPtr arr
         $ \src -> do
               let uncompLen = Array.byteLength arr
@@ -194,10 +208,9 @@ compressChunk speed ctx arr = do
               -- data and the next 4 bytes store the length of the
               -- compressed data.
               (MArray.Array fptr dstBegin dstMax) <-
-                  MArray.newArray (maxCompLen + 8)
-              let hdrUncompLen = castPtr dstBegin
-                  hdrCompLen = dstBegin `plusPtr` 4
-                  compData = dstBegin `plusPtr` 8
+                  MArray.newArray (maxCompLen + metaSize)
+              let hdrCompLen = dstBegin `plusPtr` compSizeOffset
+                  compData = dstBegin `plusPtr` dataOffset
               compLenC <-
                   c_compressFastContinue
                       ctx src compData uncompLenC maxCompLenC speedC
@@ -205,10 +218,10 @@ compressChunk speed ctx arr = do
                 $ error $ "compressChunk: c_compressFastContinue failed. "
                     ++ "uncompLenC: " ++ show uncompLenC
                     ++ "compLenC: " ++ show compLenC
-              poke hdrUncompLen (cIntToI32 uncompLenC)
+              setUncompSize dstBegin (cIntToI32 uncompLenC)
               poke hdrCompLen (cIntToI32 compLenC)
               let compLen = cIntToInt compLenC
-                  dstEnd = dstBegin `plusPtr` (compLen + 8)
+                  dstEnd = dstBegin `plusPtr` (compLen + metaSize)
                   compArr = MArray.Array fptr dstEnd dstMax
               -- It is safe to shrink here as we need to hold the last 64KB of
               -- the previous uncompressed array and not the compressed one.
@@ -223,15 +236,17 @@ compressChunk speed ctx arr = do
 -- | Primitive function to decompress a chunk of Word8.
 {-# NOINLINE decompressChunk #-}
 decompressChunk ::
-       Ptr C_LZ4StreamDecode -> Array.Array Word8 -> IO (Array.Array Word8)
-decompressChunk ctx arr = do
+       Config a
+    -> Ptr C_LZ4StreamDecode
+    -> Array.Array Word8
+    -> IO (Array.Array Word8)
+decompressChunk Config{..} ctx arr = do
     Array.asPtr arr
         $ \src -> do
-              let hdrUncompLen :: Ptr Int32 = castPtr src
-                  hdrCompLen :: Ptr Int32 = src `plusPtr` 4
-                  compData = src `plusPtr` 8
-                  arrDataLen = Array.byteLength arr - 8
-              uncompLenC <- i32ToCInt <$> peek hdrUncompLen
+              let hdrCompLen :: Ptr Int32 = src `plusPtr` compSizeOffset
+                  compData = src `plusPtr` dataOffset
+                  arrDataLen = Array.byteLength arr - metaSize
+              uncompLenC <- i32ToCInt <$> getUncompSize src
               compLenC <- i32ToCInt <$> peek hdrCompLen
               let compLen = cIntToInt compLenC
                   maxCompLenC = lz4_MAX_OUTPUT_SIZE
@@ -253,7 +268,7 @@ decompressChunk ctx arr = do
               decompLenC <-
                   c_decompressSafeContinue
                         ctx compData dstBegin compLenC uncompLenC
-              when (decompLenC < 0 || uncompLenC /= decompLenC)
+              when (decompLenC < 0)
                 $ error $ "decompressChunk: c_decompressSafeContinue failed. "
                     ++ "arrDataLen = " ++ show arrDataLen
                     ++ "compLenC = " ++ show compLenC
@@ -283,10 +298,11 @@ data CompressState st ctx prev
 {-# INLINE_NORMAL compressD #-}
 compressD ::
        MonadIO m
-    => Int
+    => Config a
+    -> Int
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
-compressD speed0 (Stream.Stream step0 state0) =
+compressD conf speed0 (Stream.Stream step0 state0) =
     Stream.Stream step (CompressInit state0)
 
     where
@@ -314,7 +330,7 @@ compressD speed0 (Stream.Stream step0 state0) =
                 if Array.byteLength arr >= 2 * 1024 * 1024 * 1024
                 then error "compressD: Array element > 2 GB encountered"
                 else do
-                    arr1 <- liftIO $ compressChunk speed lz4Ctx arr
+                    arr1 <- liftIO $ compressChunk conf speed lz4Ctx arr
                     -- XXX touch the "prev" array to keep it alive?
                     return $ Stream.Yield arr1 (CompressDo st1 lz4Ctx (Just arr))
             Stream.Skip st1 ->
@@ -343,9 +359,12 @@ data ResizeState st arr
 -- @resizeD . resizeD = resizeD@
 --
 {-# INLINE_NORMAL resizeD #-}
-resizeD :: MonadIO m =>
-    Stream.Stream m (Array.Array Word8) -> Stream.Stream m (Array.Array Word8)
-resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
+resizeD ::
+       MonadIO m
+    => Config a
+    -> Stream.Stream m (Array.Array Word8)
+    -> Stream.Stream m (Array.Array Word8)
+resizeD Config{..} (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
 
     where
 
@@ -356,9 +375,9 @@ resizeD (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
         then return $ Stream.Skip $ RAccumlate st arr
         else withForeignPtr fb
                  $ \b -> do
-                       let compLenPtr = castPtr (b `plusPtr` 4) :: Ptr Int32
+                       let compLenPtr = castPtr (b `plusPtr` compSizeOffset) :: Ptr Int32
                        compressedSize <- i32ToInt <$> peek compLenPtr
-                       let required = compressedSize + 8
+                       let required = compressedSize + metaSize
                        if len == required
                        then return $ Stream.Skip $ RYield arr $ RInit st
                        else if len < required
@@ -403,10 +422,12 @@ data DecompressState st ctx prev
 -- 'resizeD'.
 --
 {-# INLINE_NORMAL decompressResizedD #-}
-decompressResizedD :: MonadIO m
-       => Stream.Stream m (Array.Array Word8)
-       -> Stream.Stream m (Array.Array Word8)
-decompressResizedD (Stream.Stream step0 state0) =
+decompressResizedD ::
+       MonadIO m
+    => Config a
+    -> Stream.Stream m (Array.Array Word8)
+    -> Stream.Stream m (Array.Array Word8)
+decompressResizedD conf (Stream.Stream step0 state0) =
     Stream.Stream step (DecompressInit state0)
 
    where
@@ -423,7 +444,7 @@ decompressResizedD (Stream.Stream step0 state0) =
         r <- step0 gst st
         case r of
             Stream.Yield arr st1 -> do
-                arr1 <- liftIO $ decompressChunk lz4Ctx arr
+                arr1 <- liftIO $ decompressChunk conf lz4Ctx arr
                 -- Instead of the input array chunk we need to hold the output
                 -- array chunk here.
                 return $ Stream.Yield arr1 (DecompressDo st1 lz4Ctx (Just arr1))
