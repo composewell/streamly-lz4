@@ -10,11 +10,9 @@
 -- Internal module subject to change without notice.
 --
 module Streamly.Internal.LZ4
-    ( debugD
-    , debug
-
+    (
     -- * Foreign
-    , c_createStream
+      c_createStream
     , c_freeStream
     , c_createStreamDecode
     , c_freeStreamDecode
@@ -52,13 +50,12 @@ import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Coerce (coerce)
 import Data.Int (Int32)
-import Data.Word (Word32, Word8)
+import Data.Word (Word8)
 import Foreign.C (CInt(..), CString)
 import Foreign.ForeignPtr (plusForeignPtr, withForeignPtr)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peek, poke)
 import Fusion.Plugin.Types (Fuse (..))
-import Streamly.Prelude (SerialT)
 import System.IO.Unsafe (unsafePerformIO)
 
 import qualified Streamly.Internal.Data.Array.Storable.Foreign as Array
@@ -153,64 +150,6 @@ cIntToI32 = coerce
 {-# INLINE i32ToCInt #-}
 i32ToCInt :: Int32 -> CInt
 i32ToCInt = coerce
-
---------------------------------------------------------------------------------
--- Debugging
---------------------------------------------------------------------------------
-
--- | See 'debug' for documentation.
-{-# INLINE_NORMAL debugD #-}
-debugD :: MonadIO m
-    => Stream.Stream m (Array.Array Word8)
-    -> Stream.Stream m (Array.Array Word8)
-debugD (Stream.Stream step0 state0) = Stream.Stream step (0 :: Int, state0)
-
-    where
-
-    {-# INLINE putDivider #-}
-    putDivider = putStrLn "---------------------------------"
-
-    {-# INLINE debugger #-}
-    debugger i arr@(Array.Array fb _) = do
-        let len = Array.byteLength arr
-        if len <= 8
-        then do
-            putDivider
-            putStrLn $ "Index  : " ++ show i
-            putStrLn $ "Length : " ++ show len
-            putStrLn "Size info isn't available"
-        else withForeignPtr fb
-                 $ \b -> do
-                       decompressedSize <- peek (castPtr b :: Ptr Word32)
-                       compressedSize <-
-                           peek (castPtr (b `plusPtr` 4) :: Ptr Word32)
-                       putDivider
-                       putStrLn $ "Index        : " ++ show i
-                       putStrLn $ "Length       : " ++ show len
-                       putStrLn $ "Compressed   : " ++ show compressedSize
-                       putStrLn $ "Decompressed : " ++ show decompressedSize
-
-    {-# INLINE_LATE step #-}
-    step gst (i, st) = do
-        r <- step0 gst st
-        case r of
-            Stream.Yield arr st1 -> do
-                liftIO $ debugger i arr
-                return $ Stream.Yield arr (i + 1, st1)
-            Stream.Skip st1 -> return $ Stream.Skip (i, st1)
-            Stream.Stop -> do
-                liftIO putDivider
-                return Stream.Stop
-
--- | A simple combinator that prints the index, length, compressed size and
--- decompressed size of each array element to standard output.
---
--- This only works on stream of resized arrays.
---
-{-# INLINE debug #-}
-debug :: MonadIO m
-    => SerialT m (Array.Array Word8) -> SerialT m (Array.Array Word8)
-debug m = Stream.fromStreamD (debugD (Stream.toStreamD m))
 
 --------------------------------------------------------------------------------
 -- Primitives
