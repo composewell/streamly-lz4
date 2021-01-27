@@ -51,6 +51,7 @@ library
   c-sources:           c/lz4.c, c/lz4.h
   exposed-modules:     Streamly.LZ4
                      , Streamly.Internal.LZ4
+                     , Streamly.Internal.LZ4.Frame
   other-modules:       Streamly.Internal.LZ4.Config
   build-depends:       base                >= 4    && < 5
                      , fusion-plugin-types >= 0.1  && < 0.2
@@ -65,6 +66,7 @@ library
       ScopedTypeVariables
       RecordWildCards
       TypeInType
+      FlexibleContexts
 
 
 test-suite test-lz4

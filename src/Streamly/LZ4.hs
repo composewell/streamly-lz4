@@ -19,9 +19,12 @@ module Streamly.LZ4
     , addChecksum
     , removeChecksum
 
-    -- * Combinators
+    -- * General combinators
     , compress
     , decompress
+
+    -- * Combinators specific to LZ4 frame format
+    , decompressLZ4Frame
     )
 
 where
@@ -52,6 +55,8 @@ import Data.Word (Word8)
 import Streamly.Internal.Data.Array.Storable.Foreign (Array)
 import Streamly.Internal.Data.Stream.StreamD (fromStreamD, toStreamD)
 import Streamly.Prelude (SerialT)
+
+import qualified Streamly.Internal.LZ4.Frame as Frame
 
 import Streamly.Internal.LZ4.Config
 import Streamly.Internal.LZ4
@@ -105,3 +110,12 @@ decompress ::
     -> SerialT m (Array Word8)
     -> SerialT m (Array Word8)
 decompress c = fromStreamD . decompressResizedD c . resizeD c . toStreamD
+
+-- | Decompress a stream of @Array Word8@ compressed that form a valid LZ4
+-- frame. This plays nicely with the lz4 command line tool.
+--
+-- /Since 0.1.0/
+{-# INLINE decompressLZ4Frame #-}
+decompressLZ4Frame ::
+       MonadIO m => SerialT m (Array Word8) -> SerialT m (Array Word8)
+decompressLZ4Frame = fromStreamD . Frame.decompressD . toStreamD
