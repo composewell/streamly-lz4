@@ -327,7 +327,11 @@ compressD conf speed0 (Stream.Stream step0 state0) =
                     return $ Stream.Yield arr1 (CompressDo st1 ctx (Just arr))
             Stream.Skip st1 ->
                 return $ Stream.Skip $ CompressDo st1 ctx prev
-            Stream.Stop -> return $ Stream.Skip $ CompressDone ctx
+            Stream.Stop ->
+                return
+                    $ if hasEndMark conf
+                      then Stream.Yield endMarkArr $ CompressDone ctx
+                      else Stream.Skip $ CompressDone ctx
     step _ (CompressDone ctx) =
         liftIO $ c_freeStream ctx >> return Stream.Stop
 
@@ -340,6 +344,7 @@ data ResizeState st arr
     = RInit st
     | RProcess st arr
     | RAccumlate st arr
+    | RFooter st arr
     | RYield arr (ResizeState st arr)
     | RDone
 
@@ -361,13 +366,27 @@ resizeD Config{..} (Stream.Stream step0 state0) =
 
     where
 
+    -- Unsafe function
+    {-# INLINE isEndMark #-}
+    isEndMark src
+        | hasEndMark = do
+              em <- peek (castPtr src :: Ptr Int32)
+              return $ em == endMark
+        | otherwise = return False
+
     {-# INLINE process #-}
     process st arr@(Array.Array fb e) = do
         let len = Array.byteLength arr
-        if len <= metaSize
+        if len < 4
         then return $ Stream.Skip $ RAccumlate st arr
-        else withForeignPtr fb
-                 $ \b -> do
+        else withForeignPtr fb $ \b -> do
+               res <- isEndMark b
+               if res
+               then return $ Stream.Skip $ RFooter st arr
+               else do
+                   if len <= metaSize
+                   then return $ Stream.Skip $ RAccumlate st arr
+                   else do
                        let compLenPtr = castPtr (b `plusPtr` compSizeOffset)
                        compressedSize <- i32ToInt <$> peek compLenPtr
                        let required = compressedSize + metaSize
@@ -389,7 +408,10 @@ resizeD Config{..} (Stream.Stream step0 state0) =
         case r of
             Stream.Yield arr st1 -> liftIO $ process st1 arr
             Stream.Skip st1 -> return $ Stream.Skip $ RInit st1
-            Stream.Stop -> return Stream.Stop
+            Stream.Stop ->
+                if hasEndMark
+                then error "resizeD: No end mark found"
+                else return Stream.Stop
     step _ (RProcess st arr) = liftIO $ process st arr
     step gst (RAccumlate st buf) = do
         r <- step0 gst st
@@ -398,7 +420,24 @@ resizeD Config{..} (Stream.Stream step0 state0) =
                 arr1 <- Array.spliceTwo buf arr
                 liftIO $ process st1 arr1
             Stream.Skip st1 -> return $ Stream.Skip $ RAccumlate st1 buf
-            Stream.Stop -> return $ Stream.Skip $ RYield buf RDone
+            Stream.Stop -> error "resizeD: Incomplete block"
+    step gst (RFooter st buf) = do
+        -- Warn if len > footerSize
+        let len = Array.byteLength buf
+        if len < footerSize
+        then do
+            r <- step0 gst st
+            case r of
+                Stream.Yield arr st1 -> do
+                    arr1 <- Array.spliceTwo buf arr
+                    return $ Stream.Skip $ RFooter st1 arr1
+                Stream.Skip st1 -> return $ Stream.Skip $ RFooter st1 buf
+                Stream.Stop -> error "resizeD: Incomplete footer"
+        else do
+            res <- liftIO $ validateFooter buf
+            if res
+            then return Stream.Stop
+            else error "resizeD: Invalid footer"
     step _ RDone = return Stream.Stop
 
 {-# ANN type DecompressState Fuse #-}
