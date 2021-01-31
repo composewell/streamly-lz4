@@ -18,6 +18,8 @@ module Streamly.LZ4
     , removeUncompressedSize
     , addChecksum
     , removeChecksum
+    , addEndMark
+    , removeEndMark
 
     -- * Combinators
     , compress

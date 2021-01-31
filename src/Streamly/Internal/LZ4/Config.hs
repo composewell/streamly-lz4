@@ -12,11 +12,15 @@ module Streamly.Internal.LZ4.Config
     (
     -- * Configuration
       Config(..)
+    , endMark
+    , endMarkArr
     , defaultConfig
     , addUncompressedSize
     , removeUncompressedSize
     , addChecksum
     , removeChecksum
+    , addEndMark
+    , removeEndMark
     )
 
 where
@@ -25,14 +29,25 @@ where
 -- Imports
 --------------------------------------------------------------------------------
 
+import Data.Coerce (coerce)
 import Data.Int (Int32)
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peek, poke)
 
+import qualified Streamly.Internal.Data.Array.Storable.Foreign as Array
+
 --------------------------------------------------------------------------------
 -- Configuration
 --------------------------------------------------------------------------------
+
+{-# INLINE endMark #-}
+endMark :: Int32
+endMark = 0
+
+{-# INLINE endMarkArr #-}
+endMarkArr :: Array.Array Word8
+endMarkArr = coerce $ Array.fromListN 1 [endMark]
 
 type family Delete x ys where
     Delete a '[] = '[]
@@ -51,6 +66,7 @@ type IsMember a s = Member a s ~ 'True
 data Feature
     = UncompressedSize
     | Checksum
+    | EndMark
 
 -- | Depending on the configuration the combinators will behave differently. Use
 -- the helper functions to set the desired configuration.
@@ -61,6 +77,9 @@ data Config a =
         , getUncompSize :: Ptr Word8 -> IO Int32
         , dataOffset :: Int
         , compSizeOffset :: Int
+        , hasEndMark :: Bool
+        , validateFooter :: Array.Array Word8 -> IO Bool
+        , footerSize :: Int
         }
 
 {-# INLINE defaultConfig #-}
@@ -72,6 +91,9 @@ defaultConfig =
         , getUncompSize = \src -> peek (castPtr src `plusPtr` 4 :: Ptr Int32)
         , dataOffset = 8
         , compSizeOffset = 0
+        , hasEndMark = False
+        , validateFooter = \_ -> return True
+        , footerSize = 0
         }
 
 -- | Encode uncompressed size along with compressed data block.
@@ -103,6 +125,19 @@ removeUncompressedSize size config =
         , dataOffset = dataOffset config - 4
         , compSizeOffset = compSizeOffset config
         }
+
+-- | Stop when end mark is reached.
+addEndMark :: Config s -> Config ('EndMark ': s)
+addEndMark config =
+    config {hasEndMark = True, footerSize = footerSize config + 4}
+
+-- | Don't recognize end mark.
+removeEndMark ::
+       (NonMember 'FrameChecksum s, IsMember 'EndMark s)
+    => Config s
+    -> Config (Delete 'EndMark s)
+removeEndMark config =
+    config {hasEndMark = False, footerSize = footerSize config - 4}
 
 -- | Encode uncompressed size along with compressed data block.
 --
