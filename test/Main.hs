@@ -131,8 +131,32 @@ main = do
                 propsChunk config
                 propsChunk2 config
                 propsBig config 512 5 largeHC
+            describe "addEndMark defaultConfig" $ do
+                let config = addEndMark defaultConfig
+                propsSimpleDecompressCompress config
+                propsBigDecompressCompress config 512 5 largeHC
+            describe "addEndMark . removeUncompressedSize" $ do
+                let config =
+                        defaultConfig
+                            & removeUncompressedSize (1024 * 100)
+                            & addEndMark
+                propsSimpleDecompressCompress config
+                propsBigDecompressCompress config 512 5 largeHC
 
     where
+
+    propsSimpleDecompressCompress conf = do
+        it "decompress . compress == id"
+            $ property
+            $ forAll
+                  ((,) <$> genAcceleration <*> genArrayW8List)
+                  (monadicIO . liftIO . uncurry (decompressCompress conf 512))
+
+    propsBigDecompressCompress conf bufsize i l = do
+        it
+            ("decompress . compress ("
+                 ++ show i ++ "/" ++ show bufsize ++ ") == id (big)")
+            $ decompressCompress conf bufsize i l
 
     propsSimple conf = do
         it "decompressResized . compress == id"
