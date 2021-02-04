@@ -11,16 +11,8 @@
 --
 module Streamly.Internal.LZ4
     (
-    -- * Configuration
-      Config
-    , defaultConfig
-    , addUncompressedSize
-    , removeUncompressedSize
-    , addChecksum
-    , removeChecksum
-
     -- * Foreign
-    , c_createStream
+      c_createStream
     , c_freeStream
     , c_createStreamDecode
     , c_freeStreamDecode
