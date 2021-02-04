@@ -313,14 +313,14 @@ compressD conf speed0 (Stream.Stream step0 state0) =
     step _ (CompressInit st) =
         liftIO
             $ do
-                lz4Ctx <- c_createStream
+                ctx <- c_createStream
                 -- Instead of using an external dictionary we could just hold
                 -- the previous chunks. However, the dictionary is only 64KB,
                 -- if the chunk size is bigger we would be holding a lot more
                 -- data than required. Also, the perf advantage does not seem
                 -- much.
-                return $ Stream.Skip $ CompressDo st lz4Ctx Nothing
-    step gst (CompressDo st lz4Ctx prev) = do
+                return $ Stream.Skip $ CompressDo st ctx Nothing
+    step gst (CompressDo st ctx prev) = do
         r <- step0 gst st
         case r of
             Stream.Yield arr st1 ->
@@ -330,14 +330,14 @@ compressD conf speed0 (Stream.Stream step0 state0) =
                 if Array.byteLength arr >= 2 * 1024 * 1024 * 1024
                 then error "compressD: Array element > 2 GB encountered"
                 else do
-                    arr1 <- liftIO $ compressChunk conf speed lz4Ctx arr
+                    arr1 <- liftIO $ compressChunk conf speed ctx arr
                     -- XXX touch the "prev" array to keep it alive?
-                    return $ Stream.Yield arr1 (CompressDo st1 lz4Ctx (Just arr))
+                    return $ Stream.Yield arr1 (CompressDo st1 ctx (Just arr))
             Stream.Skip st1 ->
-                return $ Stream.Skip $ CompressDo st1 lz4Ctx prev
-            Stream.Stop -> return $ Stream.Skip $ CompressDone lz4Ctx
-    step _ (CompressDone lz4Ctx) =
-        liftIO $ c_freeStream lz4Ctx >> return Stream.Stop
+                return $ Stream.Skip $ CompressDo st1 ctx prev
+            Stream.Stop -> return $ Stream.Skip $ CompressDone ctx
+    step _ (CompressDone ctx) =
+        liftIO $ c_freeStream ctx >> return Stream.Stop
 
 --------------------------------------------------------------------------------
 -- Decompression
@@ -364,7 +364,8 @@ resizeD ::
     => Config a
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
-resizeD Config{..} (Stream.Stream step0 state0) = Stream.Stream step (RInit state0)
+resizeD Config{..} (Stream.Stream step0 state0) =
+    Stream.Stream step (RInit state0)
 
     where
 
@@ -375,7 +376,7 @@ resizeD Config{..} (Stream.Stream step0 state0) = Stream.Stream step (RInit stat
         then return $ Stream.Skip $ RAccumlate st arr
         else withForeignPtr fb
                  $ \b -> do
-                       let compLenPtr = castPtr (b `plusPtr` compSizeOffset) :: Ptr Int32
+                       let compLenPtr = castPtr (b `plusPtr` compSizeOffset)
                        compressedSize <- i32ToInt <$> peek compLenPtr
                        let required = compressedSize + metaSize
                        if len == required
