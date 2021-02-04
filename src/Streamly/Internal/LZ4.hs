@@ -371,7 +371,7 @@ resizeD Config{..} (Stream.Stream step0 state0) = Stream.Stream step (RInit stat
     {-# INLINE process #-}
     process st arr@(Array.Array fb e) = do
         let len = Array.byteLength arr
-        if len <= 8
+        if len <= metaSize
         then return $ Stream.Skip $ RAccumlate st arr
         else withForeignPtr fb
                  $ \b -> do
