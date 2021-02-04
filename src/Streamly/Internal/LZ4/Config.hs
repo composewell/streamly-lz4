@@ -27,7 +27,7 @@ where
 
 import Data.Int (Int32)
 import Data.Word (Word8)
-import Foreign.Ptr (Ptr, castPtr)
+import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peek, poke)
 
 --------------------------------------------------------------------------------
@@ -68,10 +68,10 @@ defaultConfig :: Config '[ 'UncompressedSize]
 defaultConfig =
     Config
         { metaSize = 8
-        , setUncompSize = poke . castPtr
-        , getUncompSize = \src -> peek (castPtr src :: Ptr Int32)
+        , setUncompSize = \src -> poke (castPtr src `plusPtr` 4)
+        , getUncompSize = \src -> peek (castPtr src `plusPtr` 4 :: Ptr Int32)
         , dataOffset = 8
-        , compSizeOffset = 4
+        , compSizeOffset = 0
         }
 
 -- | Encode uncompressed size along with compressed data block.
@@ -82,10 +82,10 @@ addUncompressedSize ::
 addUncompressedSize config =
     config
         { metaSize = metaSize config + 4
-        , setUncompSize = poke . castPtr
-        , getUncompSize = \src -> peek (castPtr src :: Ptr Int32)
+        , setUncompSize = \src -> poke (castPtr src `plusPtr` 4)
+        , getUncompSize = \src -> peek (castPtr src `plusPtr` 4 :: Ptr Int32)
         , dataOffset = dataOffset config + 4
-        , compSizeOffset = compSizeOffset config + 4
+        , compSizeOffset = compSizeOffset config
         }
 
 -- | Don't encode uncompressed size, use @size@ while allocating a new array for
@@ -101,7 +101,7 @@ removeUncompressedSize size config =
         , setUncompSize = \_ _ -> return ()
         , getUncompSize = \_ -> return size
         , dataOffset = dataOffset config - 4
-        , compSizeOffset = compSizeOffset config - 4
+        , compSizeOffset = compSizeOffset config
         }
 
 -- | Encode uncompressed size along with compressed data block.
