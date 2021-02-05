@@ -343,7 +343,7 @@ compressD conf speed0 (Stream.Stream step0 state0) =
 data ResizeState st arr
     = RInit st
     | RProcess st arr
-    | RAccumlate st arr
+    | RAccumulate st arr
     | RFooter st arr
     | RYield arr (ResizeState st arr)
     | RDone
@@ -378,14 +378,14 @@ resizeD Config{..} (Stream.Stream step0 state0) =
     process st arr@(Array.Array fb e) = do
         let len = Array.byteLength arr
         if len < 4
-        then return $ Stream.Skip $ RAccumlate st arr
+        then return $ Stream.Skip $ RAccumulate st arr
         else withForeignPtr fb $ \b -> do
                res <- isEndMark b
                if res
                then return $ Stream.Skip $ RFooter st arr
                else do
                    if len <= metaSize
-                   then return $ Stream.Skip $ RAccumlate st arr
+                   then return $ Stream.Skip $ RAccumulate st arr
                    else do
                        let compLenPtr = castPtr (b `plusPtr` compSizeOffset)
                        compressedSize <- i32ToInt <$> peek compLenPtr
@@ -393,7 +393,7 @@ resizeD Config{..} (Stream.Stream step0 state0) =
                        if len == required
                        then return $ Stream.Skip $ RYield arr $ RInit st
                        else if len < required
-                       then return $ Stream.Skip $ RAccumlate st arr
+                       then return $ Stream.Skip $ RAccumulate st arr
                        else do
                            let arr1E = b `plusPtr` required
                                arr1 = Array.Array fb arr1E
@@ -413,13 +413,13 @@ resizeD Config{..} (Stream.Stream step0 state0) =
                 then error "resizeD: No end mark found"
                 else return Stream.Stop
     step _ (RProcess st arr) = liftIO $ process st arr
-    step gst (RAccumlate st buf) = do
+    step gst (RAccumulate st buf) = do
         r <- step0 gst st
         case r of
             Stream.Yield arr st1 -> do
                 arr1 <- Array.spliceTwo buf arr
                 liftIO $ process st1 arr1
-            Stream.Skip st1 -> return $ Stream.Skip $ RAccumlate st1 buf
+            Stream.Skip st1 -> return $ Stream.Skip $ RAccumulate st1 buf
             Stream.Stop -> error "resizeD: Incomplete block"
     step gst (RFooter st buf) = do
         -- Warn if len > footerSize
