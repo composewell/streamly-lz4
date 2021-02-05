@@ -16,10 +16,12 @@ module Streamly.LZ4
     , defaultConfig
     , addUncompressedSize
     , removeUncompressedSize
-    , addChecksum
-    , removeChecksum
+    , addBlockChecksum
+    , removeBlockChecksum
     , addEndMark
     , removeEndMark
+    , addFrameChecksum
+    , removeFrameChecksum
 
     -- * Combinators
     , compress

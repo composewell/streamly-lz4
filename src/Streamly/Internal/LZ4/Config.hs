@@ -17,10 +17,12 @@ module Streamly.Internal.LZ4.Config
     , defaultConfig
     , addUncompressedSize
     , removeUncompressedSize
-    , addChecksum
-    , removeChecksum
+    , addBlockChecksum
+    , removeBlockChecksum
     , addEndMark
     , removeEndMark
+    , addFrameChecksum
+    , removeFrameChecksum
     )
 
 where
@@ -65,7 +67,8 @@ type IsMember a s = Member a s ~ 'True
 
 data Feature
     = UncompressedSize
-    | Checksum
+    | BlockChecksum
+    | FrameChecksum
     | EndMark
 
 -- | Depending on the configuration the combinators will behave differently. Use
@@ -139,20 +142,40 @@ removeEndMark ::
 removeEndMark config =
     config {hasEndMark = False, footerSize = footerSize config - 4}
 
--- | Encode uncompressed size along with compressed data block.
+-- | Encode block checksum along with compressed data block.
 --
 -- /Unimplemented/
-addChecksum ::
-       (NonMember 'Checksum s)
+addBlockChecksum ::
+       (NonMember 'BlockChecksum s)
     => Config s
-    -> Config ('Checksum ': s)
-addChecksum = error "keepChecksum: Unimplemented"
+    -> Config ('BlockChecksum ': s)
+addBlockChecksum = error "addBlockChecksum: Unimplemented"
 
--- | Don't encode uncompressed size along with compressed data block.
+-- | Don't encode block checksum along with compressed data block.
 --
 -- /Unimplemented/
-removeChecksum ::
-       (IsMember 'Checksum s)
+removeBlockChecksum ::
+       (IsMember 'BlockChecksum s)
     => Config s
-    -> Config (Delete 'Checksum s)
-removeChecksum = error "removeChecksum: Unimplemented"
+    -> Config (Delete 'BlockChecksum s)
+removeBlockChecksum = error "removeBlockChecksum: Unimplemented"
+
+-- | Encode frame checksum after the end mark.
+--
+-- /Unimplemented/
+addFrameChecksum ::
+       (NonMember 'FrameChecksum s, IsMember 'EndMark s)
+    => Config s
+    -> Config ('FrameChecksum ': s)
+addFrameChecksum =
+    -- This is where we implement a proper validateFooter
+    error "addFrameChecksum: Unimplemented"
+
+-- | Don't encode frame checksum after the endmark.
+--
+-- /Unimplemented/
+removeFrameChecksum ::
+       (IsMember 'FrameChecksum s)
+    => Config s
+    -> Config (Delete 'FrameChecksum s)
+removeFrameChecksum = error "removeFrameChecksum: Unimplemented"
