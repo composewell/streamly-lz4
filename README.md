@@ -13,7 +13,7 @@ This library comes with a `default.nix` which can be used to setup the
 environment. Using `default.nix` is highly recommended.
 
 Currently, `streamly` is pulled from master at
-`9fefed37d5da5aa103f93ded65b1335903651e26`. Until a newer version is released,
+`c8b9fac92bb0d08cb87f601882c9c634ed09af35`. Until a newer version is released,
 this package cannot be released on hackage.
 
 To install this package properly, you might need add the following to your
@@ -24,7 +24,7 @@ To install this package properly, you might need add the following to your
 source-repository-package
     type: git
     location: https://github.com/composewell/streamly
-    tag: 9fefed37d5da5aa103f93ded65b1335903651e26
+    tag: c8b9fac92bb0d08cb87f601882c9c634ed09af35
 
 source-repository-package
     type: git
@@ -40,7 +40,7 @@ If you're using stack then you'll need to add these packages to your `extra-deps
 
 extra-deps:
 - github: composewell/streamly
-  commit: 9fefed37d5da5aa103f93ded65b1335903651e26
+  commit: c8b9fac92bb0d08cb87f601882c9c634ed09af35
 - github: composewell/streamly-lz4
   commit: <latest commit of streamly-lz4>
 

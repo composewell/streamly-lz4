@@ -58,10 +58,9 @@ import Foreign.Storable (peek, poke)
 import Fusion.Plugin.Types (Fuse (..))
 import System.IO.Unsafe (unsafePerformIO)
 
-import qualified Streamly.Internal.Data.Array.Storable.Foreign as Array
-import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as Array
-import qualified
-    Streamly.Internal.Data.Array.Storable.Foreign.Mut.Types as MArray
+import qualified Streamly.Internal.Data.Array.Foreign as Array
+import qualified Streamly.Internal.Data.Array.Foreign.Types as Array
+import qualified Streamly.Internal.Data.Array.Foreign.Mut.Types as MArray
 import qualified Streamly.Internal.Data.Stream.StreamD as Stream
 
 import Streamly.Internal.LZ4.Config

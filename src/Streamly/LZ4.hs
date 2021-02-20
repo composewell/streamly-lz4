@@ -53,7 +53,7 @@ where
 
 import Control.Monad.IO.Class (MonadIO)
 import Data.Word (Word8)
-import Streamly.Internal.Data.Array.Storable.Foreign (Array)
+import Streamly.Internal.Data.Array.Foreign (Array)
 import Streamly.Internal.Data.Stream.StreamD (fromStreamD, toStreamD)
 import Streamly.Prelude (SerialT)
 
