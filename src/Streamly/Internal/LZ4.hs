@@ -25,6 +25,7 @@ module Streamly.Internal.LZ4
     , compressD
     , resizeD
     , decompressResizedD
+    , decompressFrame
     )
 
 where
@@ -47,21 +48,27 @@ where
 --------------------------------------------------------------------------------
 
 import Control.Monad (when)
+import Control.Monad.Catch (MonadCatch)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Coerce (coerce)
 import Data.Int (Int32)
-import Data.Word (Word8)
+import Data.Word (Word8, Word32)
 import Foreign.C (CInt(..), CString)
 import Foreign.ForeignPtr (plusForeignPtr, withForeignPtr)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peek, poke)
 import Fusion.Plugin.Types (Fuse (..))
 import System.IO.Unsafe (unsafePerformIO)
+import Streamly.Internal.Data.Producer (Producer(..))
 
 import qualified Streamly.Internal.Data.Array.Foreign as Array
 import qualified Streamly.Internal.Data.Array.Foreign.Types as Array
 import qualified Streamly.Internal.Data.Array.Foreign.Mut.Types as MArray
 import qualified Streamly.Internal.Data.Stream.StreamD as Stream
+
+import qualified Streamly.Internal.Data.Producer.Source as Source
+import qualified Streamly.Internal.Data.Binary.Decode as Decode
+import qualified Streamly.Internal.Data.Parser as Parser
 
 import Streamly.Internal.LZ4.Config
 
@@ -151,6 +158,10 @@ cIntToI32 = coerce
 {-# INLINE i32ToCInt #-}
 i32ToCInt :: Int32 -> CInt
 i32ToCInt = coerce
+
+{-# INLINE w32ToInt #-}
+w32ToInt :: Word32 -> Int
+w32ToInt = fromIntegral
 
 --------------------------------------------------------------------------------
 -- Primitives
@@ -482,3 +493,69 @@ decompressResizedD conf (Stream.Stream step0 state0) =
             Stream.Skip st1 ->
                 return $ Stream.Skip $ DecompressDo st1 lz4Ctx prev
             Stream.Stop -> return $ Stream.Skip $ DecompressDone lz4Ctx
+
+--------------------------------------------------------------------------------
+-- Producer Decompression
+--------------------------------------------------------------------------------
+
+-- XXX Move this to Streamly.Internal.LZ4.Frame?
+
+{-# ANN type DecompressPState Fuse #-}
+data DecompressPState src ctx prev
+    = ParseHeader src
+    | ParseBody src ctx prev
+    | ParseFooter src
+
+{-# ANN type DecompressPAbsState Fuse #-}
+data DecompressPAbsState src
+    = ParsingHeader src
+    | ParsingBody src
+    | ParsingFooter src
+
+decompressFrame ::
+       (MonadIO m, MonadCatch m)
+    => Producer m (Source.Source s Word8) Word8
+    -> Producer m (DecompressPAbsState (Source.Source s Word8)) (Array.Array Word8)
+decompressFrame pro = Producer step inject eject
+
+    where
+
+    inject (ParsingHeader src) = return $ ParseHeader src
+    inject (ParsingBody src) = do
+        ctx <- liftIO $ c_createStreamDecode
+        return $ ParseBody src ctx Nothing
+    inject (ParsingFooter src) = return $ ParseFooter src
+
+    eject (ParseHeader src) = return $ ParsingHeader src
+    eject (ParseBody src ctx _) = do
+        liftIO $ c_freeStreamDecode ctx
+        return $ ParsingBody src
+    eject (ParseFooter src) = return $ ParsingFooter src
+
+    step (ParseHeader src) = do
+        -- (config, src1) <- Producer.parseD headerParser pro src
+        ctx <- liftIO $ c_createStreamDecode
+        return $ Stream.Skip (ParseBody src ctx Nothing)
+    step (ParseFooter _) = do
+        -- (valid, src1) <- Producer.parseD footerParser pro src
+        let valid = True
+        if valid
+        then return Stream.Stop
+        else error "decompress: Invalid frame checksum"
+    step (ParseBody src ctx _) = do
+        -- Ideally I would like to use elemParser. To do this I would either
+        -- have to write a seperate parser or use the Monad instance.
+        -- (arr, src1) <- Producer.parseD elemParser pro src
+        (w32Len, src1) <- Source.parse Decode.word32be pro src
+        let len = w32ToInt w32Len
+        if len == 0
+        then do
+            liftIO $ c_freeStreamDecode ctx
+            return $ Stream.Skip (ParseFooter src1)
+        else do
+            let arrParser = Parser.takeEQ len (Array.writeN len)
+            (arr, src2) <- Source.parse arrParser pro src1
+            -- Parse config from the header here
+            arr1 <- liftIO $ decompressChunk defaultConfig ctx arr
+            -- touch prev here?
+            return $ Stream.Yield arr1 (ParseBody src2 ctx (Just arr1))
