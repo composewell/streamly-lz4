@@ -500,6 +500,14 @@ decompressResizedD conf (Stream.Stream step0 state0) =
 
 -- XXX Move this to Streamly.Internal.LZ4.Frame?
 
+-- XXX The only reason I'm using 2 types here instead of 1 is to have self
+-- sustained producers. Don' t know if that is ideal. I also wanted to have
+-- inject and eject other than return. Just experimenting with stuff.
+
+-- XXX Imo, we can probably get away with having a "Stepper" type. Basically
+-- StreamD without existential quantification. We should somehow try to
+-- integrate "Stepper" with StreamD.
+
 {-# ANN type DecompressPState Fuse #-}
 data DecompressPState src ctx prev
     = ParseHeader src
