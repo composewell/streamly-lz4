@@ -530,7 +530,7 @@ decompressFrame pro = Producer step inject eject
 
     inject (ParsingHeader src) = return $ ParseHeader src
     inject (ParsingBody src) = do
-        ctx <- liftIO $ c_createStreamDecode
+        ctx <- liftIO c_createStreamDecode
         return $ ParseBody src ctx Nothing
     inject (ParsingFooter src) = return $ ParseFooter src
 
@@ -542,7 +542,7 @@ decompressFrame pro = Producer step inject eject
 
     step (ParseHeader src) = do
         -- (config, src1) <- Producer.parseD headerParser pro src
-        ctx <- liftIO $ c_createStreamDecode
+        ctx <- liftIO c_createStreamDecode
         return $ Stream.Skip (ParseBody src ctx Nothing)
     step (ParseFooter _) = do
         -- (valid, src1) <- Producer.parseD footerParser pro src
