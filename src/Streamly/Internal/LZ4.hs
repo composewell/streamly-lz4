@@ -535,12 +535,14 @@ decompressFrame pro = Producer step inject eject
 
     config = defaultConfig & removeUncompressedSize (1024 * 100) & addEndMark
 
+    {-# INLINE inject #-}
     inject (ParsingHeader src) = return $ ParseHeader src
     inject (ParsingBody src) = do
         ctx <- liftIO c_createStreamDecode
         return $ ParseBody src ctx Nothing
     inject (ParsingFooter src) = return $ ParseFooter src
 
+    {-# INLINE eject #-}
     eject (ParseHeader src) = return $ ParsingHeader src
     eject (ParseBody src ctx _) = do
         liftIO $ c_freeStreamDecode ctx
