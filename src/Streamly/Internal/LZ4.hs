@@ -587,10 +587,6 @@ decompressFrame pro = Producer step inject eject
         else do
             -- +4 for the meta data
             let arrParser = Parser.takeEQ (len + 4) (Array.writeN (len + 4))
-            -- This is deliberately src and not src1
-            -- This is performing unnecessary effects. We should ideally use a
-            -- complete parser.
-            -- Or we can unread the decoded length
             (arr, src3) <- Source.parse arrParser pro src2
             -- Parse config from the header here
             arr1 <- liftIO $ decompressChunk config ctx arr
