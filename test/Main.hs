@@ -13,9 +13,13 @@ import Test.QuickCheck.Gen
     ( Gen, choose, elements, frequency, generate, listOf, vectorOf )
 import Test.QuickCheck.Monadic (monadicIO)
 
-import qualified Streamly.Internal.Data.Array.Foreign.Types as Array
+import qualified Streamly.Internal.Data.Array.Foreign  as Array
 import qualified Streamly.Internal.Data.Stream.IsStream as Stream
+import qualified Streamly.Internal.Data.Stream.StreamD as StreamD
 import qualified Streamly.Internal.FileSystem.Handle as Handle
+
+import qualified Streamly.Internal.Data.Producer.Source as Source
+import qualified Streamly.Internal.Data.Producer as Producer
 
 import Streamly.Internal.LZ4
 import Streamly.LZ4
@@ -95,6 +99,17 @@ decompressCompress conf bufsize i lst = do
                           & decompress conf
         lst1 `shouldBe` lst
 
+decompressFrameCompress :: Int -> [Array.Array Word8] -> IO ()
+decompressFrameCompress i lst = do
+    let conf = defaultConfig & removeUncompressedSize (1024 * 100) & addEndMark
+        strm = compressD conf i $ StreamD.fromList lst
+        prod = Producer.concat Producer.fromStreamD Array.producer
+        srced = Source.producer prod
+        unf = Producer.simplify $ decompressFrame srced
+        seed = Source.source $ Just (Producer.OuterLoop strm)
+    lst1 <- Stream.toList $ Stream.unfold unf $ ParsingHeader seed
+    lst `shouldBe` lst1
+
 resizeIdempotence :: Config a -> Property
 resizeIdempotence conf  =
     forAll ((,) <$> genAcceleration <*> genArrayW8List)
@@ -142,8 +157,14 @@ main = do
                             & addEndMark
                 propsSimpleDecompressCompress config
                 propsBigDecompressCompress config 512 5 largeHC
+            describe "decompressFrame . compress" $ do
+                propsDecompressFrameCompress largeHC
 
     where
+
+    propsDecompressFrameCompress arrList = do
+        it  ("decompressFrame . compress == id (big)")
+            (decompressFrameCompress 5 arrList)
 
     propsSimpleDecompressCompress conf = do
         it "decompress . compress == id"
