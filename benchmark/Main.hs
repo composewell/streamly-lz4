@@ -11,9 +11,14 @@ import System.Directory (getCurrentDirectory, doesFileExist)
 import System.Environment (lookupEnv)
 
 import qualified Streamly.Internal.Data.Stream.IsStream as Stream
+import qualified Streamly.Internal.Data.Stream.StreamD as StreamD
 import qualified Streamly.Internal.FileSystem.File as File
 import qualified Streamly.Internal.LZ4 as LZ4
 import qualified Streamly.LZ4 as LZ4
+
+import qualified Streamly.Internal.Data.Array.Foreign as Array
+import qualified Streamly.Internal.Data.Producer.Source as Source
+import qualified Streamly.Internal.Data.Producer as Producer
 
 import Gauge.Main
 
@@ -51,6 +56,9 @@ normalizedName x = x ++ ".normalized"
 bigCompressedName :: String -> String
 bigCompressedName x = x ++ ".normalized.compressed.big"
 
+frameCompressedName :: String -> String
+frameCompressedName x = x ++ ".normalized.compressed.frame"
+
 smallCompressedName :: String -> String
 smallCompressedName x = x ++ ".normalized.compressed.small"
 
@@ -59,6 +67,7 @@ bootstrap fp = do
     let normalizedFp = normalizedName fp
         compressedFpBig = bigCompressedName fp
         compressedFpSmall = smallCompressedName fp
+        compressedFpFrame = frameCompressedName fp
     fileExists <- doesFileExist normalizedFp
     unless fileExists $ do
         putStrLn $ "Normalizing " ++ fp
@@ -72,6 +81,11 @@ bootstrap fp = do
                        & File.fromChunks compressedFpBig
         combinedStream & LZ4.compress LZ4.defaultConfig 1
                        & File.fromChunks compressedFpSmall
+        let frameConf = LZ4.defaultConfig
+                            & LZ4.removeUncompressedSize (fromIntegral _64KB)
+                            & LZ4.addEndMark
+        combinedStream & LZ4.compress frameConf 65537
+                       & File.fromChunks compressedFpFrame
 
 --------------------------------------------------------------------------------
 -- Benchmark helpers
@@ -109,6 +123,17 @@ resize :: Int -> String -> Benchmark
 resize bufsize corpus =
     benchCorpus bufsize "resize" corpus
         $ fromStreamD . LZ4.resizeD LZ4.defaultConfig . toStreamD
+
+{-# INLINE decompressFrame #-}
+decompressFrame :: String -> Benchmark
+decompressFrame corpus =
+    let str = StreamD.unfold File.readChunksWithBufferOf (_64KB, corpus)
+        prod = Producer.concat Producer.fromStreamD Array.producer
+        srced = Source.producer prod
+        unf = Producer.simplify $ LZ4.decompressFrame srced
+        seed = LZ4.ParsingHeader $ Source.source $ Just $ Producer.OuterLoop str
+        bname = ("bufsize(" ++ show _64KB ++ ")/decompressFrame/" ++ corpus)
+     in bench bname $ nfIO $ Stream.drain $ Stream.unfold unf seed
 
 --------------------------------------------------------------------------------
 -- Reading environment
@@ -173,6 +198,7 @@ main = do
         relNormalized f = normalizedName (base ++ f)
         relBigCompressed f = bigCompressedName (base ++ f)
         relSmallCompressed f = smallCompressedName (base ++ f)
+        relFrameCompressed f = frameCompressedName (base ++ f)
     bootstrap (rel large_bible_txt)
     bootstrap (rel large_world192_txt)
     bootstrap (rel cantrbry_alice29_txt)
@@ -181,6 +207,7 @@ main = do
         external ++
         [ compression_files relNormalized
         , decompression_files_big relBigCompressed
+        , decompressFrame_files relFrameCompressed
         , decompression_files_small relSmallCompressed
         , compression_accelaration relNormalized
         , compression_buffer relNormalized
@@ -204,6 +231,14 @@ main = do
             [ decompress _64KB (f large_bible_txt)
             , decompress _64KB (f large_world192_txt)
             , decompress _64KB (f cantrbry_alice29_txt)
+            ]
+
+    decompressFrame_files f =
+        bgroup
+            "decompressFrame/files"
+            [ decompressFrame (f large_bible_txt)
+            , decompressFrame (f large_world192_txt)
+            , decompressFrame (f cantrbry_alice29_txt)
             ]
 
     decompression_files_small f =
