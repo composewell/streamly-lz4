@@ -25,6 +25,8 @@ module Streamly.Internal.LZ4
     , compressD
     , resizeD
     , decompressResizedD
+
+    , DecompressPAbsState(..)
     , decompressFrame
     )
 
@@ -50,7 +52,9 @@ where
 import Control.Monad (when)
 import Control.Monad.Catch (MonadCatch)
 import Control.Monad.IO.Class (MonadIO(..))
+import Data.Bits ((.&.), shiftR)
 import Data.Coerce (coerce)
+import Data.Function ((&))
 import Data.Int (Int32)
 import Data.Word (Word8, Word32)
 import Foreign.C (CInt(..), CString)
@@ -257,9 +261,9 @@ decompressChunk Config{..} ctx arr = do
               -- Error checks
               if compLenC <= 0
               then error "decompressChunk: compressed data length > 2GB"
-              else if compLen < arrDataLen
+              else if compLen /= arrDataLen
               then error $ "decompressChunk: input array data length "
-                ++ show arrDataLen ++ " is less than "
+                ++ show arrDataLen ++ " is not equal to "
                 ++ "the compressed data length specified in the header "
                 ++ show compLen
               else when (compLenC > maxCompLenC) $
@@ -528,6 +532,8 @@ decompressFrame pro = Producer step inject eject
 
     where
 
+    config = defaultConfig & removeUncompressedSize (1024 * 100) & addEndMark
+
     inject (ParsingHeader src) = return $ ParseHeader src
     inject (ParsingBody src) = do
         ctx <- liftIO c_createStreamDecode
@@ -554,16 +560,39 @@ decompressFrame pro = Producer step inject eject
         -- Ideally I would like to use elemParser. To do this I would either
         -- have to write a seperate parser or use the Monad instance.
         -- (arr, src1) <- Producer.parseD elemParser pro src
-        (w32Len, src1) <- Source.parse Decode.word32be pro src
+        (w32Len, src1) <- Source.parse Decode.word32le pro src
+        let rebuf =
+                [ fromIntegral $ w32Len .&. 255
+                , fromIntegral $ (w32Len `shiftR` 8) .&. 255
+                , fromIntegral $ (w32Len `shiftR` 16) .&. 255
+                , fromIntegral $ (w32Len `shiftR` 24) .&. 255
+                ]
+            src2 = Source.unread rebuf src1
+        -- XXX The following is buggy
+        -- (w32Len, _) <- Source.parse Decode.word32le produce src
+        -- liftIO $ print w32Len
+        -- (w32Len, _) <- Source.parse Decode.word32le produce src
+        -- liftIO $ print w32Len
+        -- (w32Len, _) <- Source.parse Decode.word32le produce src
+        -- liftIO $ print w32Len
+        -- (w32Len, _) <- Source.parse Decode.word32le produce src
+        -- liftIO $ print w32Len
+        -- (w32Len, _) <- Source.parse Decode.word32le produce src
+        -- liftIO $ print w32Len
         let len = w32ToInt w32Len
-        if len == 0
+        if len == 0 || Source.isEmpty src1
         then do
             liftIO $ c_freeStreamDecode ctx
             return $ Stream.Skip (ParseFooter src1)
         else do
-            let arrParser = Parser.takeEQ len (Array.writeN len)
-            (arr, src2) <- Source.parse arrParser pro src1
+            -- +4 for the meta data
+            let arrParser = Parser.takeEQ (len + 4) (Array.writeN (len + 4))
+            -- This is deliberately src and not src1
+            -- This is performing unnecessary effects. We should ideally use a
+            -- complete parser.
+            -- Or we can unread the decoded length
+            (arr, src3) <- Source.parse arrParser pro src2
             -- Parse config from the header here
-            arr1 <- liftIO $ decompressChunk defaultConfig ctx arr
+            arr1 <- liftIO $ decompressChunk config ctx arr
             -- touch prev here?
-            return $ Stream.Yield arr1 (ParseBody src2 ctx (Just arr1))
+            return $ Stream.Yield arr1 (ParseBody src3 ctx (Just arr1))
