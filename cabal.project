@@ -4,3 +4,9 @@ source-repository-package
     type: git
     location: https://github.com/composewell/streamly
     tag: c8b9fac92bb0d08cb87f601882c9c634ed09af35
+
+
+source-repository-package
+    type: git
+    location: https://github.com/composewell/fusion-plugin
+    tag: 1fb54fba222618d290f41ba1bc9510c97b9d6696

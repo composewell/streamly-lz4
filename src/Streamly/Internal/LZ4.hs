@@ -524,6 +524,7 @@ data DecompressPAbsState src
     | ParsingBody src
     | ParsingFooter src
 
+{-# INLINE_NORMAL decompressFrame #-}
 decompressFrame ::
        (MonadIO m, MonadCatch m)
     => Producer m (Source.Source s Word8) Word8
@@ -546,6 +547,7 @@ decompressFrame pro = Producer step inject eject
         return $ ParsingBody src
     eject (ParseFooter src) = return $ ParsingFooter src
 
+    {-# INLINE_LATE step #-}
     step (ParseHeader src) = do
         -- (config, src1) <- Producer.parseD headerParser pro src
         ctx <- liftIO c_createStreamDecode

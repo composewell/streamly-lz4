@@ -118,6 +118,14 @@ decompress bufsize corpus =
     benchCorpus bufsize "decompress" corpus
         $ LZ4.decompress LZ4.defaultConfig
 
+{-# INLINE decompressFrameConfig #-}
+decompressFrameConfig :: Int -> String -> Benchmark
+decompressFrameConfig bufsize corpus = do
+    let frameConf =
+            LZ4.defaultConfig & LZ4.removeUncompressedSize (fromIntegral _64KB)
+                & LZ4.addEndMark
+    benchCorpus bufsize "decompress" corpus $ LZ4.decompress frameConf
+
 {-# INLINE resize #-}
 resize :: Int -> String -> Benchmark
 resize bufsize corpus =
@@ -237,6 +245,7 @@ main = do
         bgroup
             "decompressFrame/files"
             [ decompressFrame (f large_bible_txt)
+            , decompressFrameConfig _64KB (f large_bible_txt)
             , decompressFrame (f large_world192_txt)
             , decompressFrame (f cantrbry_alice29_txt)
             ]
