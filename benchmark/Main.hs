@@ -1,6 +1,7 @@
 module Main (main) where
 
 import Control.Monad (unless)
+import Control.Monad.IO.Class (MonadIO(..))
 import Data.Semigroup (cycle1)
 import Data.Word (Word8)
 import Data.Function ((&))
@@ -9,16 +10,19 @@ import Streamly.Internal.Data.Stream.StreamD (fromStreamD, toStreamD)
 import Streamly.Prelude (SerialT)
 import System.Directory (getCurrentDirectory, doesFileExist)
 import System.Environment (lookupEnv)
+import System.IO (openFile, IOMode(..), Handle, SeekMode(..), hSeek)
 
 import qualified Streamly.Internal.Data.Stream.IsStream as Stream
 import qualified Streamly.Internal.Data.Stream.StreamD as StreamD
 import qualified Streamly.Internal.FileSystem.File as File
+import qualified Streamly.Internal.FileSystem.Handle as FH
 import qualified Streamly.Internal.LZ4 as LZ4
 import qualified Streamly.LZ4 as LZ4
 
 import qualified Streamly.Internal.Data.Array.Foreign as Array
 import qualified Streamly.Internal.Data.Producer.Source as Source
 import qualified Streamly.Internal.Data.Producer as Producer
+import qualified Streamly.Internal.Data.Unfold as Unfold
 
 import Gauge.Main
 
@@ -133,14 +137,15 @@ resize bufsize corpus =
         $ fromStreamD . LZ4.resizeD LZ4.defaultConfig . toStreamD
 
 {-# INLINE decompressFrame #-}
-decompressFrame :: String -> Benchmark
-decompressFrame corpus =
-    let str = StreamD.unfold File.readChunksWithBufferOf (_64KB, corpus)
+decompressFrame :: Handle -> Benchmark
+decompressFrame h =
+    -- let str = StreamD.unfold File.readChunksWithBufferOf (_64KB, corpus)
+    let str = StreamD.unfold (Unfold.lmapM (\x@(n,h) -> liftIO (hSeek h AbsoluteSeek 0) >> return x) FH.readChunksWithBufferOf) (_64KB, h)
         prod = Producer.concat Producer.fromStreamD Array.producer
         srced = Source.producer prod
         unf = Producer.simplify $ LZ4.decompressFrame srced
-        seed = LZ4.ParsingHeader $ Source.source $ Just $ Producer.OuterLoop str
-        bname = ("bufsize(" ++ show _64KB ++ ")/decompressFrame/" ++ corpus)
+        seed = LZ4.ParsingBody $ Source.source $ Just $ Producer.OuterLoop str
+        bname = ("bufsize(" ++ show _64KB ++ ")/decompressFrame/" ++ "large-bible-txt")
      in bench bname $ nfIO $ Stream.drain $ Stream.unfold unf seed
 
 --------------------------------------------------------------------------------
@@ -211,16 +216,20 @@ main = do
     bootstrap (rel large_world192_txt)
     bootstrap (rel cantrbry_alice29_txt)
     external <- maybe [] (: []) <$> tryBenchExternal
+    h <- openFile (relFrameCompressed large_bible_txt) ReadMode
     defaultMain $
         external ++
-        [ compression_files relNormalized
+        [ {- compression_files relNormalized
         , decompression_files_big relBigCompressed
-        , decompressFrame_files relFrameCompressed
+        -}
+          decompressFrame_files h relFrameCompressed
+          {-
         , decompression_files_small relSmallCompressed
         , compression_accelaration relNormalized
         , compression_buffer relNormalized
         , decompression_buffer relBigCompressed
         , resizing_buffer relBigCompressed
+        -}
         ]
 
     where
@@ -241,13 +250,13 @@ main = do
             , decompress _64KB (f cantrbry_alice29_txt)
             ]
 
-    decompressFrame_files f =
+    decompressFrame_files h f =
         bgroup
             "decompressFrame/files"
-            [ decompressFrame (f large_bible_txt)
+            [ decompressFrame h
             , decompressFrameConfig _64KB (f large_bible_txt)
-            , decompressFrame (f large_world192_txt)
-            , decompressFrame (f cantrbry_alice29_txt)
+            -- , decompressFrame h (f large_world192_txt)
+            -- , decompressFrame h (f cantrbry_alice29_txt)
             ]
 
     decompression_files_small f =

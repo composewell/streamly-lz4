@@ -1,5 +1,5 @@
 # nix-shell --argstr c2nix "--benchmark --flag fusion-plugin"
-{ nixpkgs ? import <nixpkgs> {}
+{ nixpkgs ? import <nixpkgs> { config.allowBroken = true; }
 , compiler ? "default"
 , c2nix ? "--benchmark" }:
 let

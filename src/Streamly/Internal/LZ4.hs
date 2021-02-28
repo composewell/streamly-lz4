@@ -26,7 +26,7 @@ module Streamly.Internal.LZ4
     , resizeD
     , decompressResizedD
 
-    , DecompressPAbsState(..)
+--     , DecompressPAbsState(..)
     , decompressFrame
     )
 
@@ -49,6 +49,8 @@ where
 -- Imports
 --------------------------------------------------------------------------------
 
+import Control.Concurrent (threadDelay)
+import Debug.Trace
 import Control.Monad (when)
 import Control.Monad.Catch (MonadCatch)
 import Control.Monad.IO.Class (MonadIO(..))
@@ -64,6 +66,7 @@ import Foreign.Storable (peek, poke)
 import Fusion.Plugin.Types (Fuse (..))
 import System.IO.Unsafe (unsafePerformIO)
 import Streamly.Internal.Data.Producer (Producer(..))
+import Streamly.Internal.Data.Array.Foreign (Array)
 
 import qualified Streamly.Internal.Data.Array.Foreign as Array
 import qualified Streamly.Internal.Data.Array.Foreign.Types as Array
@@ -71,8 +74,11 @@ import qualified Streamly.Internal.Data.Array.Foreign.Mut.Types as MArray
 import qualified Streamly.Internal.Data.Stream.StreamD as Stream
 
 import qualified Streamly.Internal.Data.Producer.Source as Source
+import qualified Streamly.Internal.Data.Producer.Type as Producer
 import qualified Streamly.Internal.Data.Binary.Decode as Decode
 import qualified Streamly.Internal.Data.Parser as Parser
+import qualified Streamly.Internal.Data.Parser.ParserD as ParserD
+import qualified Streamly.Internal.Data.Fold as Fold
 
 import Streamly.Internal.LZ4.Config
 
@@ -512,23 +518,24 @@ decompressResizedD conf (Stream.Stream step0 state0) =
 -- StreamD without existential quantification. We should somehow try to
 -- integrate "Stepper" with StreamD.
 
+{-
 {-# ANN type DecompressPState Fuse #-}
 data DecompressPState src ctx prev
-    = ParseHeader src
-    | ParseBody src ctx prev
-    | ParseFooter src
+    = -- ParseHeader src
+      ParseBody src -- ctx prev
+    -- | ParseFooter src
 
 {-# ANN type DecompressPAbsState Fuse #-}
 data DecompressPAbsState src
-    = ParsingHeader src
-    | ParsingBody src
-    | ParsingFooter src
+    = -- ParsingHeader src
+      ParsingBody src
+    -- | ParsingFooter src
 
 {-# INLINE_NORMAL decompressFrame #-}
 decompressFrame ::
        (MonadIO m, MonadCatch m)
-    => Producer m (Source.Source s Word8) Word8
-    -> Producer m (DecompressPAbsState (Source.Source s Word8)) (Array.Array Word8)
+    => Producer m (Source.Source s (Array Word8)) (Array Word8)
+    -> Producer m (DecompressPAbsState (Source.Source s (Array Word8))) ()
 decompressFrame pro = Producer step inject eject
 
     where
@@ -536,19 +543,20 @@ decompressFrame pro = Producer step inject eject
     config = defaultConfig & removeUncompressedSize (1024 * 100) & addEndMark
 
     {-# INLINE inject #-}
-    inject (ParsingHeader src) = return $ ParseHeader src
+    -- inject (ParsingHeader src) = return $ ParseHeader src
     inject (ParsingBody src) = do
-        ctx <- liftIO c_createStreamDecode
-        return $ ParseBody src ctx Nothing
-    inject (ParsingFooter src) = return $ ParseFooter src
+        -- ctx <- liftIO c_createStreamDecode
+        return $ ParseBody src
+    -- inject (ParsingFooter src) = return $ ParseFooter src
 
     {-# INLINE eject #-}
-    eject (ParseHeader src) = return $ ParsingHeader src
-    eject (ParseBody src ctx _) = do
-        liftIO $ c_freeStreamDecode ctx
+    -- eject (ParseHeader src) = return $ ParsingHeader src
+    eject (ParseBody src ) = do
+        -- liftIO $ c_freeStreamDecode ctx
         return $ ParsingBody src
-    eject (ParseFooter src) = return $ ParsingFooter src
+    -- eject (ParseFooter src) = return $ ParsingFooter src
 
+{-
     {-# INLINE_LATE step #-}
     step (ParseHeader src) = do
         -- (config, src1) <- Producer.parseD headerParser pro src
@@ -560,7 +568,9 @@ decompressFrame pro = Producer step inject eject
         if valid
         then return Stream.Stop
         else error "decompress: Invalid frame checksum"
-    step (ParseBody src ctx _) = do
+            -}
+    step (ParseBody src) = do
+    {-
         -- Ideally I would like to use elemParser. To do this I would either
         -- have to write a seperate parser or use the Monad instance.
         -- (arr, src1) <- Producer.parseD elemParser pro src
@@ -595,4 +605,81 @@ decompressFrame pro = Producer step inject eject
             -- Parse config from the header here
             arr1 <- liftIO $ decompressChunk config ctx arr
             -- touch prev here?
-            return $ Stream.Yield arr1 (ParseBody src3 ctx (Just arr1))
+            -}
+            -- let p = Parser.fromFold $ Array.writeN 32000
+            let p = Parser.fromFold $ Fold.drain
+            (x, src3) <- Source.parse p pro src
+            if Source.isEmpty src3
+            then return Stream.Stop
+            else return $ Stream.Yield x (ParseBody src3)
+            -}
+
+{-
+{-# INLINE_NORMAL decompressFrame #-}
+decompressFrame ::
+       (MonadIO m, MonadCatch m)
+    => Producer m (Source.Source s (Array Word8)) (Array Word8)
+    -> Producer m (Source.Source s (Array Word8)) (Array Word8)
+decompressFrame pro = do
+    -- Source.parseOnceD (ParserD.satisfy (const True)) pro
+    w32Len <- Source.parseOnceD Decode.word32le pro
+    Source.parseManyD (ParserD.satisfy (const True)) pro
+    -}
+
+-- Producer.const $ liftIO $ threadDelay 1
+    -- else do -- Source.parseManyD (ParserD.satisfy (const True)) pro
+{-# INLINE_NORMAL decompressFrame #-}
+decompressFrame ::
+       (MonadIO m, MonadCatch m)
+    => Producer m (Source.Source s (Word8)) (Word8)
+    -> Producer m (Source.Source s (Word8)) (Array Word8)
+decompressFrame pro = do
+{-
+    len <- Source.parseOnceD (ParserD.fromFold $ Fold.length) pro
+    Producer.const $ liftIO $ putStrLn $ "len = " ++ show len
+    src <- Producer.identity
+    if Source.isEmpty src
+    then Producer.nil
+    else trace ("len = " ++ show len) (return mempty)
+-}
+    ctx <- Producer.const $ liftIO c_createStreamDecode
+    Producer.const $ liftIO $ putStrLn $ "ctx"
+    -- w32Len <- Source.parseOnceD (ParserD.lookAhead Decode.word32leD) pro
+    w32Len <- Source.parseOnceD (Decode.word32leD) pro
+    let len = w32ToInt w32Len
+    {-
+    src <- Producer.identity
+    if len == 0 || Source.isEmpty src
+    then Producer.nil
+    else do
+        -}
+
+    let rebuf =
+            [ fromIntegral $ w32Len .&. 255
+            , fromIntegral $ (w32Len `shiftR` 8) .&. 255
+            , fromIntegral $ (w32Len `shiftR` 16) .&. 255
+            , fromIntegral $ (w32Len `shiftR` 24) .&. 255
+            ]
+    Producer.const $ liftIO $ putStrLn $ "unreading"
+    -- Producer.modify (Source.unread rebuf)
+    Producer.const $ liftIO $ putStrLn $ "done unreading"
+    -- trace ("len = " ++ show len) $ return ()
+    let p = ParserD.takeEQ (len + 4) (Array.writeN (len + 4))
+    arr <- Source.parseOnceD p pro
+    Producer.const $ liftIO $ putStrLn $ "parsed arr"
+
+        {-
+        src <- Producer.identity
+        if Source.isEmpty src
+        then Producer.nil
+        else do
+            -}
+
+    Source.parseOnceD (ParserD.fromFold $ Fold.takeLE 4 Fold.drain) pro
+    Producer.const $ liftIO $ putStrLn $ "decompressing"
+    arr1 <- Producer.const $ liftIO $ decompressChunk config ctx arr
+    return arr1
+
+    where
+
+    config = defaultConfig & removeUncompressedSize (1024 * 100) & addEndMark
