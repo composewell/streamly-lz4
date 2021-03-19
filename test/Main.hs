@@ -13,7 +13,7 @@ import Test.QuickCheck.Gen
     ( Gen, choose, elements, frequency, generate, listOf, vectorOf )
 import Test.QuickCheck.Monadic (monadicIO)
 
-import qualified Streamly.Internal.Data.Array.Storable.Foreign.Types as Array
+import qualified Streamly.Internal.Data.Array.Foreign.Type as Array
 import qualified Streamly.Internal.Data.Stream.IsStream as Stream
 import qualified Streamly.Internal.FileSystem.Handle as Handle
 

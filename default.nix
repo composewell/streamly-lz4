@@ -25,7 +25,7 @@ let
         _: super: {
           streamly =
             let src = "https://github.com/composewell/streamly.git";
-                ref = "9fefed37d5da5aa103f93ded65b1335903651e26";
+                ref = "543bd8ca9f3de3dcc67576a0003d53c677950b54";
             in mkPkgGit super src ref "streamly";
         };
     };
