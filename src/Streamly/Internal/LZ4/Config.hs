@@ -37,7 +37,7 @@ import Data.Word (Word8)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peek, poke)
 
-import qualified Streamly.Internal.Data.Array.Storable.Foreign as Array
+import qualified Streamly.Internal.Data.Array.Foreign as Array
 
 --------------------------------------------------------------------------------
 -- Configuration
