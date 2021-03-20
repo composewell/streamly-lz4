@@ -12,6 +12,7 @@ module Streamly.Internal.LZ4.Config
     (
     -- * Configuration
       Config(..)
+    , Feature(..)
     , endMark
     , endMarkArr
     , defaultConfig
