@@ -11,8 +11,10 @@ import System.Directory (getCurrentDirectory, doesFileExist)
 import System.Environment (lookupEnv)
 
 import qualified Streamly.Internal.Data.Stream.IsStream as Stream
+import qualified Streamly.Internal.Data.Array.Foreign as Array
 import qualified Streamly.Internal.FileSystem.File as File
 import qualified Streamly.Internal.LZ4 as LZ4
+import qualified Streamly.Internal.LZ4.Config as LZ4
 import qualified Streamly.LZ4 as LZ4
 
 import Gauge.Main
@@ -54,11 +56,15 @@ bigCompressedName x = x ++ ".normalized.compressed.big"
 smallCompressedName :: String -> String
 smallCompressedName x = x ++ ".normalized.compressed.small"
 
+withCompressedName :: String -> String
+withCompressedName x = x ++ ".normalized.compressed.frame"
+
 bootstrap :: String -> IO ()
 bootstrap fp = do
     let normalizedFp = normalizedName fp
         compressedFpBig = bigCompressedName fp
         compressedFpSmall = smallCompressedName fp
+        compressedWith = withCompressedName fp
     fileExists <- doesFileExist normalizedFp
     unless fileExists $ do
         putStrLn $ "Normalizing " ++ fp
@@ -72,6 +78,21 @@ bootstrap fp = do
                        & File.fromChunks compressedFpBig
         combinedStream & LZ4.compress LZ4.defaultConfig 1
                        & File.fromChunks compressedFpSmall
+        -- Stream with header that returns the config
+        -- Magic Little endian (4 bytes) = 407708164
+        let magicLE = [4, 34, 77, 24]
+        -- flg with everything unset
+            flg = 64
+        -- bd with 64KB block max size
+            bd = 64
+            headerChk = 0
+            headerList = magicLE ++ [flg, bd, headerChk]
+            header = Stream.fromList headerList
+        headerArr <- Stream.fold (Array.writeN (length headerList)) header
+        frameConfig <- Stream.parseD LZ4.simpleFrameParser header
+        combinedStream & LZ4.compress frameConfig 65537
+                       & Stream.cons headerArr
+                       & File.fromChunks compressedWith
 
 --------------------------------------------------------------------------------
 -- Benchmark helpers
@@ -103,6 +124,12 @@ decompress :: Int -> String -> Benchmark
 decompress bufsize corpus =
     benchCorpus bufsize "decompress" corpus
         $ LZ4.decompress LZ4.defaultConfig
+
+{-# INLINE decompressWith #-}
+decompressWith :: Int -> String -> Benchmark
+decompressWith bufsize corpus =
+    benchCorpus bufsize "decompressWith" corpus
+        $ fromStreamD . LZ4.decompressWith LZ4.simpleFrameParser . toStreamD
 
 {-# INLINE resize #-}
 resize :: Int -> String -> Benchmark
@@ -172,6 +199,7 @@ main = do
     let rel f = base ++ f
         relNormalized f = normalizedName (base ++ f)
         relBigCompressed f = bigCompressedName (base ++ f)
+        relWithCompressed f = withCompressedName (base ++ f)
         relSmallCompressed f = smallCompressedName (base ++ f)
     bootstrap (rel large_bible_txt)
     bootstrap (rel large_world192_txt)
@@ -181,6 +209,7 @@ main = do
         external ++
         [ compression_files relNormalized
         , decompression_files_big relBigCompressed
+        , decompression_files_with relWithCompressed
         , decompression_files_small relSmallCompressed
         , compression_accelaration relNormalized
         , compression_buffer relNormalized
@@ -204,6 +233,14 @@ main = do
             [ decompress _64KB (f large_bible_txt)
             , decompress _64KB (f large_world192_txt)
             , decompress _64KB (f cantrbry_alice29_txt)
+            ]
+
+    decompression_files_with f =
+        bgroup
+            "decompressWith"
+            [ decompressWith _64KB (f large_bible_txt)
+            , decompressWith _64KB (f large_world192_txt)
+            , decompressWith _64KB (f cantrbry_alice29_txt)
             ]
 
     decompression_files_small f =
