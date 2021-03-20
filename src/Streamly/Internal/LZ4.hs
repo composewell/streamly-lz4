@@ -261,10 +261,10 @@ decompressChunk Config{..} ctx arr = do
                         ctx compData dstBegin compLenC uncompLenC
               when (decompLenC < 0)
                 $ error $ "decompressChunk: c_decompressSafeContinue failed. "
-                    ++ "arrDataLen = " ++ show arrDataLen
-                    ++ "compLenC = " ++ show compLenC
-                    ++ "uncompLenC = " ++ show uncompLenC
-                    ++ "decompLenC = " ++ show decompLenC
+                    ++ "\narrDataLen = " ++ show arrDataLen
+                    ++ "\ncompLenC = " ++ show compLenC
+                    ++ "\nuncompLenC = " ++ show uncompLenC
+                    ++ "\ndecompLenC = " ++ show decompLenC
               let decompLen = cIntToInt decompLenC
                   dstEnd = dstBegin `plusPtr` decompLen
                   decompArr = MArray.Array fptr dstEnd dstMax
