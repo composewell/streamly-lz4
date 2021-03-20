@@ -32,11 +32,9 @@ genArrayW8Large = do
     Array.fromList <$> vectorOf arrS (elements [0,1])
 
 -- HC : Highly compressible
-genArrayW8LargeHC :: Gen (Array.Array Word8)
-genArrayW8LargeHC = do
-    let minArr = 1024 * 10
-        maxArr = 1024 * 100
-    arrS <- choose (minArr, maxArr)
+genArrayW8LargeHC :: (Int, Int) -> Gen (Array.Array Word8)
+genArrayW8LargeHC (min_, max_) = do
+    arrS <- choose (min_, max_)
     Array.fromList <$> vectorOf arrS (frequency [(9, pure 0), (1, pure 1)])
 
 genNonEmptyListWith :: Gen (Array.Array Word8) -> Gen [Array.Array Word8]
@@ -95,6 +93,42 @@ decompressCompress conf bufsize i lst = do
                           & decompress conf
         lst1 `shouldBe` lst
 
+
+decompressWithCompress :: Int -> Int -> [Array.Array Word8] -> IO ()
+decompressWithCompress bufsize i lst = do
+    -- Stream with header that returns the config
+    -- Magic Little endian (4 bytes) = 407708164
+    let magicLE = [4, 34, 77, 24]
+    -- flg with everything unset
+        flg = 64
+    -- bd with 64KB block max size
+        bd = 64
+        headerChk = 0
+        headerList = magicLE ++ [flg, bd, headerChk]
+        header = Stream.fromList headerList
+    headerArr <- Stream.fold (Array.writeN (length headerList)) header
+    frameConfig <- Stream.parseD simpleFrameParser header
+    let strm = Stream.fromList lst
+    withSystemTempFile "LZ4" $ \tmp tmpH -> do
+        compress frameConfig i strm
+            & Stream.cons headerArr
+            & Handle.fromChunks tmpH
+        hClose tmpH
+        lst1 <-
+            Stream.toList
+                $ Stream.bracket_ (openFile tmp ReadMode) hClose
+                $ \h ->
+                      Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
+                          & decompressWith_
+        lst1 `shouldBe` lst
+
+    where
+
+    decompressWith_ ::
+           Stream.SerialT IO (Array.Array Word8)
+        -> Stream.SerialT IO (Array.Array Word8)
+    decompressWith_ = fromStreamD . decompressWith simpleFrameParser . toStreamD
+
 resizeIdempotence :: Config a -> Property
 resizeIdempotence conf  =
     forAll ((,) <$> genAcceleration <*> genArrayW8List)
@@ -111,7 +145,10 @@ resizeIdempotence conf  =
 main :: IO ()
 main = do
     large <- generate $ genNonEmptyListWith genArrayW8Large
-    largeHC <- generate $ genNonEmptyListWith genArrayW8LargeHC
+    largeHC <-
+        generate
+            $ genNonEmptyListWith
+            $ genArrayW8LargeHC (1024 * 10, 1024 * 64)
     hspec $ do
         describe "Idempotence" $
             it "resize" (resizeIdempotence defaultConfig)
@@ -142,6 +179,8 @@ main = do
                             & addEndMark
                 propsSimpleDecompressCompress config
                 propsBigDecompressCompress config 512 5 largeHC
+            describe "parse config (decompressWith)" $ do
+                propsDecompressWithCompress 512 5 largeHC
 
     where
 
@@ -157,6 +196,11 @@ main = do
             ("decompress . compress ("
                  ++ show i ++ "/" ++ show bufsize ++ ") == id (big)")
             $ decompressCompress conf bufsize i l
+
+    propsDecompressWithCompress bufsize i l = do
+        it
+            ("decompressWith . compress == id")
+            (decompressWithCompress bufsize i l)
 
     propsSimple conf = do
         it "decompressResized . compress == id"
