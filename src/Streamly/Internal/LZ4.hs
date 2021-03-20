@@ -25,6 +25,10 @@ module Streamly.Internal.LZ4
     , compressD
     , resizeD
     , decompressResizedD
+
+    -- * Parsing
+    , simpleFrameParser
+    , decompressWith
     )
 
 where
@@ -47,7 +51,9 @@ where
 --------------------------------------------------------------------------------
 
 import Control.Monad (when)
+import Control.Monad.Catch (MonadThrow)
 import Control.Monad.IO.Class (MonadIO(..))
+import Data.Bits (Bits(..))
 import Data.Coerce (coerce)
 import Data.Int (Int32)
 import Data.Word (Word8)
@@ -61,6 +67,8 @@ import System.IO.Unsafe (unsafePerformIO)
 import qualified Streamly.Internal.Data.Array.Foreign as Array
 import qualified Streamly.Internal.Data.Array.Foreign.Type as Array
 import qualified Streamly.Internal.Data.Array.Foreign.Mut.Type as MArray
+import qualified Streamly.Internal.Data.Parser.ParserD as Parser
+import qualified Streamly.Internal.Data.Fold as Fold
 import qualified Streamly.Internal.Data.Stream.StreamD as Stream
 
 import Streamly.Internal.LZ4.Config
@@ -482,3 +490,82 @@ decompressResizedD conf (Stream.Stream step0 state0) =
             Stream.Skip st1 ->
                 return $ Stream.Skip $ DecompressDo st1 lz4Ctx prev
             Stream.Stop -> return $ Stream.Skip $ DecompressDone lz4Ctx
+
+decompressWith ::
+       (MonadThrow m, MonadIO m)
+    => Parser.Parser m Word8 (Config c)
+    -> Stream.Stream m (Array.Array Word8)
+    -> Stream.Stream m (Array.Array Word8)
+decompressWith p s = do
+    (config, next) <- Stream.yieldM $ Stream.parseArray p s
+    decompressResizedD config (resizeD config next)
+
+
+data FLG =
+    FLG
+        { isBlockIndependent :: Bool
+        , hasBlockChecksum :: Bool
+        , hasContentSize :: Bool
+        , hasContentChecksum :: Bool
+        , hasDict :: Bool
+        }
+
+simpleFrameParser ::
+       (Monad m, MonadThrow m) => Parser.Parser m Word8 (Config '[ 'EndMark])
+simpleFrameParser = do
+    _ <- assertMagic
+    _flg <- parseFLG
+    blockMaxSize <- parseBD
+    _ <- assertHeaderChecksum
+    let config = removeUncompressedSize blockMaxSize $ addEndMark defaultConfig
+    Parser.yield config
+
+    where
+
+    assertHeaderChecksum = Parser.satisfy (const True)
+
+    assertMagic = do
+        let magic = 407708164 :: Int
+        magic_ <-
+            let w8ToInt = fromIntegral :: Word8 -> Int
+                stp (i, b) a = (i + 8, b + w8ToInt a * 2 ^ i) :: (Int, Int)
+                fld = Fold.mkFoldl stp (0, 0)
+             in Parser.takeEQ 4 (snd <$> fld)
+        if magic_ == magic
+        then Parser.yield ()
+        else Parser.die
+                 ("The parsed magic "
+                     ++ show magic_ ++ " does not match " ++ show magic)
+
+    parseFLG = do
+        a <- Parser.satisfy (const True)
+        let isVersion01 = not (testBit a 7) && testBit a 6
+        let flg =
+                FLG
+                    (testBit a 5)
+                    (testBit a 4)
+                    (testBit a 3)
+                    (testBit a 2)
+                    (testBit a 0)
+        if isVersion01
+        then if isBlockIndependent flg
+        then Parser.die "Block independence is not yet supported"
+        else if hasBlockChecksum flg
+        then Parser.die "Block checksum is not yet supported"
+        else if hasContentSize flg
+        then Parser.die "Content size is not yet supported"
+        else if hasContentChecksum flg
+        then Parser.die "Content checksum is not yet supported"
+        else if hasDict flg
+        then Parser.die "Dict is not yet supported"
+        else Parser.yield flg
+        else Parser.die "Version is not 01"
+
+    parseBD = do
+        a <- Parser.satisfy (const True)
+        case shiftR a 4 of
+            4 -> Parser.yield (64 * 1024)
+            5 -> Parser.yield (256 * 1024)
+            6 -> Parser.yield (1024 * 1024)
+            7 -> Parser.yield (4 * 1024 * 1024)
+            _ -> Parser.die "parseBD: Unknown block max size"

@@ -51,9 +51,10 @@ library
   c-sources:           c/lz4.c, c/lz4.h
   exposed-modules:     Streamly.LZ4
                      , Streamly.Internal.LZ4
-  other-modules:       Streamly.Internal.LZ4.Config
+                     , Streamly.Internal.LZ4.Config
   build-depends:       base                >= 4    && < 5
                      , fusion-plugin-types >= 0.1  && < 0.2
+                     , exceptions          >= 0.8  && < 0.11
                      , streamly
   ghc-options:         -Wall
   default-language:    Haskell2010
@@ -65,7 +66,7 @@ library
       ScopedTypeVariables
       RecordWildCards
       TypeInType
-
+      FlexibleContexts
 
 test-suite test-lz4
   type:                exitcode-stdio-1.0
