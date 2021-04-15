@@ -53,6 +53,7 @@ where
 import Control.Monad (when)
 import Control.Monad.Catch (MonadThrow)
 import Control.Monad.IO.Class (MonadIO(..))
+import Data.Bifunctor (second)
 import Data.Bits (Bits(..))
 import Data.Coerce (coerce)
 import Data.Int (Int32)
@@ -70,6 +71,8 @@ import qualified Streamly.Internal.Data.Array.Foreign.Mut.Type as MArray
 import qualified Streamly.Internal.Data.Parser.ParserD as Parser
 import qualified Streamly.Internal.Data.Fold as Fold
 import qualified Streamly.Internal.Data.Stream.StreamD as Stream
+import qualified Streamly.Internal.Data.Array.Stream.Foreign as ArrayStream
+import qualified Streamly.Internal.Data.Array.Stream.Fold.Foreign as ArrayFold
 
 import Streamly.Internal.LZ4.Config
 
@@ -497,7 +500,8 @@ decompressWith ::
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
 decompressWith p s = do
-    (config, next) <- Stream.yieldM $ Stream.parseArray p s
+    (config, next) <- Stream.yieldM $ second Stream.toStreamD
+        <$> ArrayStream.fold_ (ArrayFold.fromParser p) (Stream.fromStreamD s)
     decompressResizedD config (resizeD config next)
 
 
@@ -529,7 +533,7 @@ simpleFrameParser = do
         magic_ <-
             let w8ToInt = fromIntegral :: Word8 -> Int
                 stp (i, b) a = (i + 8, b + w8ToInt a * 2 ^ i) :: (Int, Int)
-                fld = Fold.mkFoldl stp (0, 0)
+                fld = Fold.foldl' stp (0, 0)
              in Parser.takeEQ 4 (snd <$> fld)
         if magic_ == magic
         then Parser.yield ()
