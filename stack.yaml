@@ -3,7 +3,7 @@ packages:
 resolver: lts-16.11
 extra-deps:
 - github: composewell/streamly
-  commit: 543bd8ca9f3de3dcc67576a0003d53c677950b54
+  commit: eb50b94bd2d01149fb031544bdf7582105587806
 nix:
   enable: true
   packages: [gmp]

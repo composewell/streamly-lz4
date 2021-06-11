@@ -500,7 +500,7 @@ decompressWith ::
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
 decompressWith p s = do
-    (config, next) <- Stream.yieldM $ second Stream.toStreamD
+    (config, next) <- Stream.fromEffect $ second Stream.toStreamD
         <$> ArrayStream.fold_ (ArrayFold.fromParser p) (Stream.fromStreamD s)
     decompressResizedD config (resizeD config next)
 
@@ -522,7 +522,7 @@ simpleFrameParser = do
     blockMaxSize <- parseBD
     _ <- assertHeaderChecksum
     let config = removeUncompressedSize blockMaxSize $ addEndMark defaultConfig
-    Parser.yield config
+    Parser.fromPure config
 
     where
 
@@ -536,7 +536,7 @@ simpleFrameParser = do
                 fld = Fold.foldl' stp (0, 0)
              in Parser.takeEQ 4 (snd <$> fld)
         if magic_ == magic
-        then Parser.yield ()
+        then Parser.fromPure ()
         else Parser.die
                  ("The parsed magic "
                      ++ show magic_ ++ " does not match " ++ show magic)
@@ -562,14 +562,14 @@ simpleFrameParser = do
         then Parser.die "Content checksum is not yet supported"
         else if hasDict flg
         then Parser.die "Dict is not yet supported"
-        else Parser.yield flg
+        else Parser.fromPure flg
         else Parser.die "Version is not 01"
 
     parseBD = do
         a <- Parser.satisfy (const True)
         case shiftR a 4 of
-            4 -> Parser.yield (64 * 1024)
-            5 -> Parser.yield (256 * 1024)
-            6 -> Parser.yield (1024 * 1024)
-            7 -> Parser.yield (4 * 1024 * 1024)
+            4 -> Parser.fromPure (64 * 1024)
+            5 -> Parser.fromPure (256 * 1024)
+            6 -> Parser.fromPure (1024 * 1024)
+            7 -> Parser.fromPure (4 * 1024 * 1024)
             _ -> Parser.die "parseBD: Unknown block max size"

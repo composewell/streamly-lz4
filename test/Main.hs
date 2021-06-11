@@ -83,7 +83,7 @@ decompressCompress :: Config a -> Int -> Int -> [Array.Array Word8] -> IO ()
 decompressCompress conf bufsize i lst = do
     let strm = Stream.fromList lst
     withSystemTempFile "LZ4" $ \tmp tmpH -> do
-        compress conf i strm & Handle.fromChunks tmpH
+        compress conf i strm & Handle.putChunks tmpH
         hClose tmpH
         lst1 <-
             Stream.toList
@@ -112,7 +112,7 @@ decompressWithCompress bufsize i lst = do
     withSystemTempFile "LZ4" $ \tmp tmpH -> do
         compress frameConfig i strm
             & Stream.cons headerArr
-            & Handle.fromChunks tmpH
+            & Handle.putChunks tmpH
         hClose tmpH
         lst1 <-
             Stream.toList
