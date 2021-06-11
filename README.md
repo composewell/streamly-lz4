@@ -9,8 +9,8 @@ To read more about LZ4 go to <https://github.com/lz4/lz4>
 
 ## Installation
 
-This library comes with a `default.nix` which can be used to setup the
-environment. Using `default.nix` is highly recommended.
+This library comes with a `shell.nix` which can be used to setup the
+environment. Using `shell.nix` is highly recommended.
 
 Currently, `streamly` is pulled from master at
 `9fefed37d5da5aa103f93ded65b1335903651e26`. Until a newer version is released,

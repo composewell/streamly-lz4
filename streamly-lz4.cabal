@@ -20,7 +20,7 @@ extra-source-files:  CHANGELOG.md
                    , stack.yaml
                    , .github/workflows/haskell.yml
                    , appveyor.yml
-                   , default.nix
+                   , shell.nix
                    , download-corpora.sh
 
 flag fusion-plugin
