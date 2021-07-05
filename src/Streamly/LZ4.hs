@@ -24,8 +24,8 @@ module Streamly.LZ4
     , removeFrameChecksum
 
     -- * Combinators
-    , compress
-    , decompress
+    , compressChunks
+    , decompressChunks
     )
 
 where
@@ -64,7 +64,7 @@ import Streamly.Internal.LZ4
 -- Compression
 --------------------------------------------------------------------------------
 
--- | @compress speedup stream@ compresses an input stream of @Array word8@
+-- | @compressChunks speedup stream@ compresses an input stream of @Array word8@
 -- resulting in a stream of @Array Word8@ where each array represents a
 -- compressed input block. @speedup@ is a compression speedup factor, the more
 -- the value of @speedup@ the faster the compression but the size of compressed
@@ -82,14 +82,14 @@ import Streamly.Internal.LZ4
 -- stored in machine byte ordering.
 --
 -- /Since 0.1.0/
-{-# INLINE compress #-}
-compress ::
+{-# INLINE compressChunks #-}
+compressChunks ::
        MonadIO m
     => Config a
     -> Int
     -> SerialT m (Array Word8)
     -> SerialT m (Array Word8)
-compress c i m = fromStreamD (compressD c i (toStreamD m))
+compressChunks c i m = fromStreamD (compressChunksD c i (toStreamD m))
 
 --------------------------------------------------------------------------------
 -- Decompression
@@ -102,10 +102,11 @@ compress c i m = fromStreamD (compressD c i (toStreamD m))
 -- one compressed block each.
 --
 -- /Since 0.1.0/
-{-# INLINE decompress #-}
-decompress ::
+{-# INLINE decompressChunks #-}
+decompressChunks ::
        MonadIO m
     => Config a
     -> SerialT m (Array Word8)
     -> SerialT m (Array Word8)
-decompress c = fromStreamD . decompressResizedD c . resizeD c . toStreamD
+decompressChunks c =
+    fromStreamD . decompressChunksRawD c . resizeChunksD c . toStreamD
