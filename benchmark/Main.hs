@@ -74,9 +74,9 @@ bootstrap fp = do
                     $ Stream.take _10MB
                     $ cycle1 fileStream
         combinedStream & File.fromChunks normalizedFp
-        combinedStream & LZ4.compress LZ4.defaultConfig 65537
+        combinedStream & LZ4.compressChunks LZ4.defaultConfig 65537
                        & File.fromChunks compressedFpBig
-        combinedStream & LZ4.compress LZ4.defaultConfig 1
+        combinedStream & LZ4.compressChunks LZ4.defaultConfig 1
                        & File.fromChunks compressedFpSmall
         -- Stream with header that returns the config
         -- Magic Little endian (4 bytes) = 407708164
@@ -89,8 +89,8 @@ bootstrap fp = do
             headerList = magicLE ++ [flg, bd, headerChk]
             header = Stream.fromList headerList
         headerArr <- Stream.fold (Array.writeN (length headerList)) header
-        frameConfig <- Stream.parseD LZ4.simpleFrameParser header
-        combinedStream & LZ4.compress frameConfig 65537
+        frameConfig <- Stream.parseD LZ4.simpleFrameParserD header
+        combinedStream & LZ4.compressChunks frameConfig 65537
                        & Stream.cons headerArr
                        & File.fromChunks compressedWith
 
@@ -117,25 +117,26 @@ benchCorpus bufsize name corpus combinator =
 compress :: Int -> Int -> String -> Benchmark
 compress bufsize i corpus =
     benchCorpus bufsize ("compress " ++ show i) corpus
-        $ LZ4.compress LZ4.defaultConfig i
+        $ LZ4.compressChunks LZ4.defaultConfig i
 
 {-# INLINE decompress #-}
 decompress :: Int -> String -> Benchmark
 decompress bufsize corpus =
     benchCorpus bufsize "decompress" corpus
-        $ LZ4.decompress LZ4.defaultConfig
+        $ LZ4.decompressChunks LZ4.defaultConfig
 
 {-# INLINE decompressWith #-}
 decompressWith :: Int -> String -> Benchmark
 decompressWith bufsize corpus =
     benchCorpus bufsize "decompressWith" corpus
-        $ fromStreamD . LZ4.decompressWith LZ4.simpleFrameParser . toStreamD
+        $ fromStreamD
+        . LZ4.decompressChunksWithD LZ4.simpleFrameParserD . toStreamD
 
 {-# INLINE resize #-}
 resize :: Int -> String -> Benchmark
 resize bufsize corpus =
     benchCorpus bufsize "resize" corpus
-        $ fromStreamD . LZ4.resizeD LZ4.defaultConfig . toStreamD
+        $ fromStreamD . LZ4.resizeChunksD LZ4.defaultConfig . toStreamD
 
 --------------------------------------------------------------------------------
 -- Reading environment

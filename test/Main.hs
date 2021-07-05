@@ -71,26 +71,26 @@ decompressCompressChunk2 conf i arr1 arr2 = do
 decompressResizedcompress :: Config a -> Int -> [Array.Array Word8] -> IO ()
 decompressResizedcompress conf i lst =
     let strm = Stream.fromList lst
-     in do lst1 <- Stream.toList $ decompressResized $ compress conf i strm
+     in do lst1 <-
+               Stream.toList $ decompressChunksRaw $ compressChunks conf i strm
            lst `shouldBe` lst1
 
     where
 
-    decompressResized =
-        fromStreamD . decompressResizedD conf . toStreamD
+    decompressChunksRaw = fromStreamD . decompressChunksRawD conf . toStreamD
 
 decompressCompress :: Config a -> Int -> Int -> [Array.Array Word8] -> IO ()
 decompressCompress conf bufsize i lst = do
     let strm = Stream.fromList lst
     withSystemTempFile "LZ4" $ \tmp tmpH -> do
-        compress conf i strm & Handle.putChunks tmpH
+        compressChunks conf i strm & Handle.putChunks tmpH
         hClose tmpH
         lst1 <-
             Stream.toList
                 $ Stream.bracket_ (openFile tmp ReadMode) hClose
                 $ \h ->
                       Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
-                          & decompress conf
+                          & decompressChunks conf
         lst1 `shouldBe` lst
 
 
@@ -107,10 +107,10 @@ decompressWithCompress bufsize i lst = do
         headerList = magicLE ++ [flg, bd, headerChk]
         header = Stream.fromList headerList
     headerArr <- Stream.fold (Array.writeN (length headerList)) header
-    frameConfig <- Stream.parseD simpleFrameParser header
+    frameConfig <- Stream.parseD simpleFrameParserD header
     let strm = Stream.fromList lst
     withSystemTempFile "LZ4" $ \tmp tmpH -> do
-        compress frameConfig i strm
+        compressChunks frameConfig i strm
             & Stream.cons headerArr
             & Handle.putChunks tmpH
         hClose tmpH
@@ -127,20 +127,21 @@ decompressWithCompress bufsize i lst = do
     decompressWith_ ::
            Stream.SerialT IO (Array.Array Word8)
         -> Stream.SerialT IO (Array.Array Word8)
-    decompressWith_ = fromStreamD . decompressWith simpleFrameParser . toStreamD
+    decompressWith_ =
+        fromStreamD . decompressChunksWithD simpleFrameParserD . toStreamD
 
 resizeIdempotence :: Config a -> Property
 resizeIdempotence conf  =
     forAll ((,) <$> genAcceleration <*> genArrayW8List)
         $ \(acc, w8List) -> do
-              let strm = compress conf acc $ Stream.fromList w8List
-              f1 <- Stream.toList $ resize strm
-              f2 <- Stream.toList $ foldr ($) strm $ replicate acc resize
+              let strm = compressChunks conf acc $ Stream.fromList w8List
+              f1 <- Stream.toList $ resizeChunks strm
+              f2 <- Stream.toList $ foldr ($) strm $ replicate acc resizeChunks
               f1 `shouldBe` f2
 
     where
 
-    resize = fromStreamD . resizeD conf . toStreamD
+    resizeChunks = fromStreamD . resizeChunksD conf . toStreamD
 
 main :: IO ()
 main = do
