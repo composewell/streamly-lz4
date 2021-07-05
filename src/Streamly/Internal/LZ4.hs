@@ -22,13 +22,13 @@ module Streamly.Internal.LZ4
     , decompressChunk
 
     -- * Streaming
-    , compressD
-    , resizeD
-    , decompressResizedD
+    , compressChunksD
+    , resizeChunksD
+    , decompressChunksRawD
 
     -- * Parsing
-    , simpleFrameParser
-    , decompressWith
+    , simpleFrameParserD
+    , decompressChunksWithD
     )
 
 where
@@ -297,14 +297,14 @@ data CompressState st ctx prev
 -- the stream into 64KB blocks before compression.
 --
 -- | See 'Streamly.LZ4.compress' for documentation.
-{-# INLINE_NORMAL compressD #-}
-compressD ::
+{-# INLINE_NORMAL compressChunksD #-}
+compressChunksD ::
        MonadIO m
     => Config a
     -> Int
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
-compressD conf speed0 (Stream.Stream step0 state0) =
+compressChunksD conf speed0 (Stream.Stream step0 state0) =
     Stream.Stream step (CompressInit state0)
 
     where
@@ -330,7 +330,7 @@ compressD conf speed0 (Stream.Stream step0 state0) =
                 -- represent the length of the array. The maximum value of a
                 -- 32-bit signed int is 2GB.
                 if Array.byteLength arr >= 2 * 1024 * 1024 * 1024
-                then error "compressD: Array element > 2 GB encountered"
+                then error "compressChunksD: Array element > 2 GB encountered"
                 else do
                     arr1 <- liftIO $ compressChunk conf speed ctx arr
                     -- XXX touch the "prev" array to keep it alive?
@@ -363,15 +363,15 @@ data ResizeState st arr
 -- data prefixed to it.
 --
 -- This has the property of idempotence,
--- @resizeD . resizeD = resizeD@
+-- @resizeChunksD . resizeChunksD = resizeChunksD@
 --
-{-# INLINE_NORMAL resizeD #-}
-resizeD ::
+{-# INLINE_NORMAL resizeChunksD #-}
+resizeChunksD ::
        MonadIO m
     => Config a
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
-resizeD Config{..} (Stream.Stream step0 state0) =
+resizeChunksD Config{..} (Stream.Stream step0 state0) =
     Stream.Stream step (RInit state0)
 
     where
@@ -420,7 +420,7 @@ resizeD Config{..} (Stream.Stream step0 state0) =
             Stream.Skip st1 -> return $ Stream.Skip $ RInit st1
             Stream.Stop ->
                 if hasEndMark
-                then error "resizeD: No end mark found"
+                then error "resizeChunksD: No end mark found"
                 else return Stream.Stop
     step _ (RProcess st arr) = liftIO $ process st arr
     step gst (RAccumulate st buf) = do
@@ -430,7 +430,7 @@ resizeD Config{..} (Stream.Stream step0 state0) =
                 arr1 <- Array.spliceTwo buf arr
                 liftIO $ process st1 arr1
             Stream.Skip st1 -> return $ Stream.Skip $ RAccumulate st1 buf
-            Stream.Stop -> error "resizeD: Incomplete block"
+            Stream.Stop -> error "resizeChunksD: Incomplete block"
     step gst (RFooter st buf) = do
         -- Warn if len > footerSize
         let len = Array.byteLength buf
@@ -442,12 +442,12 @@ resizeD Config{..} (Stream.Stream step0 state0) =
                     arr1 <- Array.spliceTwo buf arr
                     return $ Stream.Skip $ RFooter st1 arr1
                 Stream.Skip st1 -> return $ Stream.Skip $ RFooter st1 buf
-                Stream.Stop -> error "resizeD: Incomplete footer"
+                Stream.Stop -> error "resizeChunksD: Incomplete footer"
         else do
             res <- liftIO $ validateFooter buf
             if res
             then return Stream.Stop
-            else error "resizeD: Invalid footer"
+            else error "resizeChunksD: Invalid footer"
     step _ RDone = return Stream.Stop
 
 {-# ANN type DecompressState Fuse #-}
@@ -459,17 +459,17 @@ data DecompressState st ctx prev
 -- | This combinator assumes all the arrays in the incoming stream are properly
 -- resized.
 --
--- This combinator works well with untouched arrays compressed with 'compressD'.
+-- This combinator works well with untouched arrays compressed with 'compressChunksD'.
 -- A random compressed stream would first need to be resized properly with
--- 'resizeD'.
+-- 'resizeChunksD'.
 --
-{-# INLINE_NORMAL decompressResizedD #-}
-decompressResizedD ::
+{-# INLINE_NORMAL decompressChunksRawD #-}
+decompressChunksRawD ::
        MonadIO m
     => Config a
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
-decompressResizedD conf (Stream.Stream step0 state0) =
+decompressChunksRawD conf (Stream.Stream step0 state0) =
     Stream.Stream step (DecompressInit state0)
 
    where
@@ -494,15 +494,15 @@ decompressResizedD conf (Stream.Stream step0 state0) =
                 return $ Stream.Skip $ DecompressDo st1 lz4Ctx prev
             Stream.Stop -> return $ Stream.Skip $ DecompressDone lz4Ctx
 
-decompressWith ::
+decompressChunksWithD ::
        (MonadThrow m, MonadIO m)
     => Parser.Parser m Word8 (Config c)
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
-decompressWith p s = do
+decompressChunksWithD p s = do
     (config, next) <- Stream.fromEffect $ second Stream.toStreamD
         <$> ArrayStream.fold_ (ArrayFold.fromParser p) (Stream.fromStreamD s)
-    decompressResizedD config (resizeD config next)
+    decompressChunksRawD config (resizeChunksD config next)
 
 
 data FLG =
@@ -514,9 +514,9 @@ data FLG =
         , hasDict :: Bool
         }
 
-simpleFrameParser ::
+simpleFrameParserD ::
        (Monad m, MonadThrow m) => Parser.Parser m Word8 (Config '[ 'EndMark])
-simpleFrameParser = do
+simpleFrameParserD = do
     _ <- assertMagic
     _flg <- parseFLG
     blockMaxSize <- parseBD
