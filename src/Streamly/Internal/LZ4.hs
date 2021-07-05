@@ -185,7 +185,7 @@ compressChunk ::
     -> Array.Array Word8
     -> IO (Array.Array Word8)
 compressChunk Config{..} speed ctx arr = do
-    Array.asPtr arr
+    Array.unsafeAsPtr arr
         $ \src -> do
               let uncompLen = Array.byteLength arr
                   maxUncompLen = cIntToInt lz4_MAX_INPUT_SIZE
@@ -243,7 +243,7 @@ decompressChunk ::
     -> Array.Array Word8
     -> IO (Array.Array Word8)
 decompressChunk Config{..} ctx arr = do
-    Array.asPtr arr
+    Array.unsafeAsPtr arr
         $ \src -> do
               let hdrCompLen :: Ptr Int32 = src `plusPtr` compSizeOffset
                   compData = src `plusPtr` dataOffset
