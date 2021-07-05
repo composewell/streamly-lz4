@@ -2,8 +2,4 @@ packages:
 - '.'
 resolver: lts-16.11
 extra-deps:
-- github: composewell/streamly
-  commit: eb50b94bd2d01149fb031544bdf7582105587806
-nix:
-  enable: true
-  packages: [gmp]
+- streamly-0.8.0
