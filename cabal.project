@@ -1,5 +1,0 @@
-packages: .
-
-package streamly-lz4
-    tests: True
-    benchmarks: True
