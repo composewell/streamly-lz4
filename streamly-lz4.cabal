@@ -13,13 +13,8 @@ category:            Codec, Compression, Streamly
 build-type:          Simple
 
 extra-source-files:  CHANGELOG.md
-                   , .gitignore
                    , NOTICE
                    , README.md
-                   , stack.yaml
-                   , .github/workflows/haskell.yml
-                   , appveyor.yml
-                   , shell.nix
                    , download-corpora.sh
 
 flag fusion-plugin
