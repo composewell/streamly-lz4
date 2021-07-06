@@ -16,7 +16,6 @@ extra-source-files:  CHANGELOG.md
                    , .gitignore
                    , NOTICE
                    , README.md
-                   , cabal.project
                    , stack.yaml
                    , .github/workflows/haskell.yml
                    , appveyor.yml
