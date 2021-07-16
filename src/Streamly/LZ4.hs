@@ -14,14 +14,6 @@ module Streamly.LZ4
     -- * Configuration
       Config
     , defaultConfig
-    , addUncompressedSize
-    , removeUncompressedSize
-    , addBlockChecksum
-    , removeBlockChecksum
-    , addEndMark
-    , removeEndMark
-    , addFrameChecksum
-    , removeFrameChecksum
 
     -- * Combinators
     , compressChunks

@@ -17,6 +17,7 @@ import qualified Streamly.Internal.Data.Array.Foreign.Type as Array
 import qualified Streamly.Internal.Data.Stream.IsStream as Stream
 import qualified Streamly.Internal.FileSystem.Handle as Handle
 
+import Streamly.Internal.LZ4.Config
 import Streamly.Internal.LZ4
 import Streamly.LZ4
 
