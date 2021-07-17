@@ -56,13 +56,13 @@ import Streamly.Internal.LZ4
 -- Compression
 --------------------------------------------------------------------------------
 
--- | @compressChunks speedup stream@ compresses an input stream of @Array word8@
--- resulting in a stream of @Array Word8@ where each array represents a
--- compressed input block. @speedup@ is a compression speedup factor, the more
--- the value of @speedup@ the faster the compression but the size of compressed
--- data may increase. The factor should be between 1 and 65537 inclusive, if it
--- is less than 1 it is set to 1 if it is more than 65537 then it is set to
--- 65537.
+-- | @compressChunks config speedup stream@ compresses an input stream of @Array
+-- word8@ using the configuration defined by @config@. The resulting stream is
+-- of type @Array Word8@ where each array represents a compressed input
+-- block. @speedup@ is a compression speedup factor, the more the value of
+-- @speedup@ the faster the compression but the size of compressed data may
+-- increase. The factor should be between 1 and 65537 inclusive, if it is less
+-- than 1 it is set to 1 if it is more than 65537 then it is set to 65537.
 --
 -- LZ4 does not allow an uncompressed block of size more than 2,113,929,216
 -- (0x7E000000) bytes (a little less than 2GiB).  Each compressed block
@@ -88,10 +88,10 @@ compressChunks c i m = fromStreamD (compressChunksD c i (toStreamD m))
 --------------------------------------------------------------------------------
 
 -- | Decompress a stream of @Array Word8@ compressed using LZ4 stream
--- compression. See 'compress' for the format of the input blocks. The input
--- chunks could be of any size, they are resized to the appropriate block size
--- before decompression based on block headers. The output arrays correspond to
--- one compressed block each.
+-- compression. See 'compressChunks' for the format of the input blocks. The
+-- input chunks could be of any size, they are resized to the appropriate block
+-- size before decompression based on block headers. The decompressed output
+-- arrays correspond to one compressed block each.
 --
 -- /Since 0.1.0/
 {-# INLINE decompressChunks #-}

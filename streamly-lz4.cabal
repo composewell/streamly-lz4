@@ -1,5 +1,6 @@
 cabal-version:       2.2
 name:                streamly-lz4
+description:         LZ4 compression using streamly combinators.
 version:             0.1.0
 synopsis:            Streamly combinators for LZ4 compression
 license:             Apache-2.0
