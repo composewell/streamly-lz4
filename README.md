@@ -7,6 +7,19 @@ This library is inspired by <https://github.com/bigmac2k/lz4-conduit>
 
 To read more about LZ4 go to <https://github.com/lz4/lz4>
 
+## Known Limitations
+
+### Endianness
+
+The library does not specifically consider the endianness while serializing and
+deserializing. If the data is compressed on a little-endian machine, it cannot
+be decompressed on a big-endian machine and vice-versa.
+
+### Build on Windows using stack
+
+Currently, the library fails to build on windows using stack due to some
+limitations of stack itself.
+
 ## Running benchmarks
 
 Benchmarks use corpora provided by the canterbury corpus
