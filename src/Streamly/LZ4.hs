@@ -9,6 +9,33 @@
 -- Streaming APIs for LZ4 (<https://github.com/lz4/lz4>) compression and
 -- decompression.
 --
+-- A compressed LZ4 object (e.g. a file) may be represented by a sequence of
+-- one or more LZ4 frames defined by the [LZ4 frame
+-- format](https://github.com/lz4/lz4/blob/dev/doc/lz4_Frame_format.md). A
+-- frame consists of a frame header followed by a number of compressed blocks
+-- and a frame footer. The frame header defines the attributes of the
+-- compression method and the blocks in the frame. For example, the blocks may
+-- be independently compressed or future blocks may depend on the past blocks.
+-- It may also describe the maximum size of the blocks in the frame and use of
+-- some optional features.
+--
+-- This module exposes combinators to only compress or decompress the stream of
+-- blocks in a frame and not the frame itself. See the "Streamly.Internal.LZ4"
+-- module for an experimental frame parsing function.
+--
+-- How the blocks are encoded depends on the attributes specified in the frame.
+-- We provide a 'Config' parameter to specify those options when decoding or
+-- encoding a stream of blocks. Assuming you have parsed the frame, you can set
+-- the 'Config' accordingly to parse the stream of blocks appropriately.
+--
+-- Please build with
+-- [fusion-plugin](https://hackage.haskell.org/package/fusion-plugin) for best
+-- performance. See the [streamly build
+-- guide](https://streamly.composewell.com/streamly-0.8.0/Compiling.html) for
+-- more details"
+--
+-- The APIs are not yet stable and may change in future.
+--
 module Streamly.LZ4
     (
     -- * Configuration
@@ -21,23 +48,6 @@ module Streamly.LZ4
     )
 
 where
-
---------------------------------------------------------------------------------
--- Developer notes
---------------------------------------------------------------------------------
-
--- If you look at LZ4 as a black box, the idea behind this library is very
--- simple.
---
--- During compression, all array elements are compressed and prefixed with meta
--- data. This meta data depends on your configuration.
---
--- If the compressed stream is ever saved to file then this meta data behaves
--- like array boundaries. 'resize' uses this meta data to create a stream that
--- respects these boundaries.
---
--- During decompression, the meta data is looked up and the compressed data used
--- for decompression.
 
 --------------------------------------------------------------------------------
 -- Imports
