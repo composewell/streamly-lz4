@@ -9,6 +9,7 @@
 --
 -- Internal module subject to change without notice.
 --
+{-# LANGUAGE NamedFieldPuns #-}
 module Streamly.Internal.LZ4
     (
     -- * Foreign
@@ -184,7 +185,8 @@ compressChunk ::
     -> Ptr C_LZ4Stream
     -> Array.Array Word8
     -> IO (Array.Array Word8)
-compressChunk Config{..} speed ctx arr = do
+compressChunk Config {metaSize, compSizeOffset, dataOffset, setUncompSize}
+    speed ctx arr = do
     Array.unsafeAsPtr arr
         $ \src -> do
               let uncompLen = Array.byteLength arr
@@ -371,7 +373,7 @@ resizeChunksD ::
     => Config a
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
-resizeChunksD Config{..} (Stream.Stream step0 state0) =
+resizeChunksD Config{hasEndMark, metaSize, compSizeOffset, footerSize, validateFooter} (Stream.Stream step0 state0) =
     Stream.Stream step (RInit state0)
 
     where
