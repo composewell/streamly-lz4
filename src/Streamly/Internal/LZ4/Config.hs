@@ -1,4 +1,9 @@
-{-# LANGUAGE GADTs, TypeOperators, ConstraintKinds, TypeFamilies, DataKinds #-}
+{-# LANGUAGE GADTs
+  , TypeOperators
+  , ConstraintKinds
+  , TypeFamilies
+  , DataKinds
+  , NamedFieldPuns #-}
 
 -- |
 -- Module      : Streamly.Internal.LZ4.Config
@@ -16,8 +21,6 @@ module Streamly.Internal.LZ4.Config
     , endMark
     , endMarkArr
     , defaultConfig
-    , addUncompressedSize
-    , removeUncompressedSize
     , addBlockChecksum
     , removeBlockChecksum
     , addEndMark
@@ -25,9 +28,15 @@ module Streamly.Internal.LZ4.Config
     , addFrameChecksum
     , removeFrameChecksum
     , FrameFormat(..)
+    , defaultFrameFormat
     , BlockFormat(..)
     , defaultBlockFormat
-    , defaultFrameFormat
+    , BlockSize(..)
+    , metaSize
+    , setUncompSize
+    , getUncompSize
+    , dataOffset
+    , compSizeOffset
     )
 
 where
@@ -82,16 +91,8 @@ data Feature
 -- the helper functions to set the desired configuration.
 data Config a =
     Config
-        -- uncompressed size handling
-        { metaSize :: Int -- depends on uncompressed size field
-        , setUncompSize :: Ptr Word8 -> Int32 -> IO ()
-        , getUncompSize :: Ptr Word8 -> IO Int32
-        , dataOffset :: Int
-
-        , compSizeOffset :: Int -- do we need this, never changes
-
         -- depends on end mark, frame checksum
-        , hasEndMark :: Bool
+        { hasEndMark :: Bool
         , footerSize :: Int
         , validateFooter :: Array.Array Word8 -> IO Bool
         }
@@ -143,7 +144,10 @@ hasContentChecksum = undefined
 
 -- This type is to be used in decompress/compress chunks APIs. It will be
 -- determined by parsing the frame.
-data BlockFormat = BlockFormat {}
+data BlockFormat =
+    BlockFormat
+        { blockSize :: BlockSize
+        }
 
 -- By default the block format is defined as follows:
 -- * BlockSize is BlockHasSize
@@ -153,9 +157,7 @@ data BlockFormat = BlockFormat {}
 -- The format setter functions can be used to modify the format as desired.
 
 defaultBlockFormat :: BlockFormat
-defaultBlockFormat = undefined
-
-{-
+defaultBlockFormat = BlockFormat {blockSize = BlockHasSize}
 
 -- | Maximum uncompressed size of a data block.
 data BlockSize =
@@ -166,6 +168,38 @@ data BlockSize =
     | BlockMax256KB
     | BlockMax1MB
     | BlockMax4MB
+
+metaSize :: BlockFormat -> Int
+metaSize BlockFormat {blockSize} =
+    case blockSize of
+        BlockHasSize -> 8
+        _ -> 4
+
+setUncompSize :: BlockFormat -> Ptr Word8 -> Int32 -> IO ()
+setUncompSize BlockFormat {blockSize} =
+    case blockSize of
+        BlockHasSize -> \src -> poke (castPtr src `plusPtr` 4)
+        _ -> \_ _ -> return ()
+
+getUncompSize :: BlockFormat -> Ptr Word8 -> IO Int32
+getUncompSize BlockFormat {blockSize} =
+    case blockSize of
+        BlockHasSize -> \src -> peek (castPtr src `plusPtr` 4 :: Ptr Int32)
+        BlockMax64KB -> \_ -> return $ 64 * 1024
+        BlockMax256KB -> \_ -> return $ 256 * 1024
+        BlockMax1MB -> \_ -> return $ 1024 * 1024
+        BlockMax4MB -> \_ -> return $ 4 * 1024 * 1024
+
+dataOffset :: BlockFormat -> Int
+dataOffset BlockFormat {blockSize} =
+    case blockSize of
+        BlockHasSize -> 8
+        _ -> 4
+
+compSizeOffset :: BlockFormat -> Int
+compSizeOffset _ = 0
+
+{-
 
 -- | Set the maximum uncompressed size of the data block.
 setBlockMaxSize :: BlockSize -> BlockFormat -> BlockFormat
@@ -184,48 +218,10 @@ setBlockChecksum = undefined
 -}
 
 {-# INLINE defaultConfig #-}
-defaultConfig :: Config '[ 'UncompressedSize]
+defaultConfig :: Config '[]
 defaultConfig =
     Config
-        { metaSize = 8
-        , setUncompSize = \src -> poke (castPtr src `plusPtr` 4)
-        , getUncompSize = \src -> peek (castPtr src `plusPtr` 4 :: Ptr Int32)
-        , dataOffset = 8
-        , compSizeOffset = 0
-        , hasEndMark = False
-        , validateFooter = \_ -> return True
-        , footerSize = 0
-        }
-
--- | Encode uncompressed size along with compressed data block.
-addUncompressedSize ::
-       (NonMember 'UncompressedSize s)
-    => Config s
-    -> Config ('UncompressedSize ': s)
-addUncompressedSize config =
-    config
-        { metaSize = metaSize config + 4
-        , setUncompSize = \src -> poke (castPtr src `plusPtr` 4)
-        , getUncompSize = \src -> peek (castPtr src `plusPtr` 4 :: Ptr Int32)
-        , dataOffset = dataOffset config + 4
-        , compSizeOffset = compSizeOffset config
-        }
-
--- | Don't encode uncompressed size, use @size@ while allocating a new array for
--- decompression instead.
-removeUncompressedSize ::
-       (IsMember 'UncompressedSize s)
-    => Int32
-    -> Config s
-    -> Config (Delete 'UncompressedSize s)
-removeUncompressedSize size config =
-    config
-        { metaSize = metaSize config - 4
-        , setUncompSize = \_ _ -> return ()
-        , getUncompSize = \_ -> return size
-        , dataOffset = dataOffset config - 4
-        , compSizeOffset = compSizeOffset config
-        }
+        {hasEndMark = False, validateFooter = \_ -> return True, footerSize = 0}
 
 -- | Stop when end mark is reached.
 addEndMark :: Config s -> Config ('EndMark ': s)
