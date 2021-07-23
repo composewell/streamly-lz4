@@ -16,19 +16,12 @@
 module Streamly.Internal.LZ4.Config
     (
     -- * Configuration
-      Config(..)
-    , Feature(..)
-    , endMark
+      endMark
     , endMarkArr
-    , defaultConfig
-    , addBlockChecksum
-    , removeBlockChecksum
-    , addEndMark
-    , removeEndMark
-    , addFrameChecksum
-    , removeFrameChecksum
     , FrameFormat(..)
     , defaultFrameFormat
+    , footerSize
+    , validateFooter
     , BlockFormat(..)
     , defaultBlockFormat
     , BlockSize(..)
@@ -54,7 +47,7 @@ import Foreign.Storable (peek, poke)
 import qualified Streamly.Internal.Data.Array.Foreign as Array
 
 --------------------------------------------------------------------------------
--- Configuration
+-- Helpers
 --------------------------------------------------------------------------------
 
 {-# INLINE endMark #-}
@@ -65,37 +58,9 @@ endMark = 0
 endMarkArr :: Array.Array Word8
 endMarkArr = coerce $ Array.fromListN 1 [endMark]
 
-type family Delete x ys where
-    Delete a '[] = '[]
-    Delete a (a ': ys) = Delete a ys
-    Delete a (y ': ys) = y ': Delete a ys
-
-type family Member x ys where
-    Member x '[] = 'False
-    Member x (x ': ys) = 'True
-    Member x (y ': ys) = Member x ys
-
-type NonMember a s = Member a s ~ 'False
-
-type IsMember a s = Member a s ~ 'True
-
--- | Fields in the LZ4 block or frame that can be configured to be present or
--- absent using 'Config'.
-data Feature
-    = UncompressedSize -- ^ Use uncompressed size in block headers
-    | BlockChecksum
-    | FrameChecksum
-    | EndMark
-
--- | Depending on the configuration the combinators will behave differently. Use
--- the helper functions to set the desired configuration.
-data Config a =
-    Config
-        -- depends on end mark, frame checksum
-        { hasEndMark :: Bool
-        , footerSize :: Int
-        , validateFooter :: Array.Array Word8 -> IO Bool
-        }
+--------------------------------------------------------------------------------
+-- Frame Configuration
+--------------------------------------------------------------------------------
 
 -- XXX We need to separate the BlockFormat and FrameFormat configuration. The
 -- block level combinators need to accept the block format configuration,
@@ -104,7 +69,19 @@ data Config a =
 -- This also means that block format cannot be static.
 
 -- This type will be used for frame generation and parsing.
-data FrameFormat = FrameFormat {}
+data FrameFormat =
+    FrameFormat
+        { hasEndMark :: Bool
+        }
+
+footerSize :: FrameFormat -> Int
+footerSize FrameFormat {hasEndMark} =
+    if hasEndMark
+    then 4
+    else 0
+
+validateFooter :: FrameFormat -> Array.Array Word8 -> IO Bool
+validateFooter _ _ = return True
 
 -- By default the frame format is defined as follows:
 -- * hasContentSize is False
@@ -115,7 +92,7 @@ data FrameFormat = FrameFormat {}
 -- The format setter functions can be used to modify the format as desired.
 
 defaultFrameFormat :: FrameFormat
-defaultFrameFormat = undefined
+defaultFrameFormat = FrameFormat {hasEndMark = True}
 
 {-
 
@@ -141,6 +118,10 @@ hasContentChecksum :: Bool -> FrameFormat -> FrameFormat
 hasContentChecksum = undefined
 
 -}
+
+--------------------------------------------------------------------------------
+-- Block Configuration
+--------------------------------------------------------------------------------
 
 -- This type is to be used in decompress/compress chunks APIs. It will be
 -- determined by parsing the frame.
@@ -216,60 +197,3 @@ setBlockChecksum :: Bool -> BlockFormat -> BlockFormat
 setBlockChecksum = undefined
 
 -}
-
-{-# INLINE defaultConfig #-}
-defaultConfig :: Config '[]
-defaultConfig =
-    Config
-        {hasEndMark = False, validateFooter = \_ -> return True, footerSize = 0}
-
--- | Stop when end mark is reached.
-addEndMark :: Config s -> Config ('EndMark ': s)
-addEndMark config =
-    config {hasEndMark = True, footerSize = footerSize config + 4}
-
--- | Don't recognize end mark.
-removeEndMark ::
-       (NonMember 'FrameChecksum s, IsMember 'EndMark s)
-    => Config s
-    -> Config (Delete 'EndMark s)
-removeEndMark config =
-    config {hasEndMark = False, footerSize = footerSize config - 4}
-
--- | Encode block checksum along with compressed data block.
---
--- /Unimplemented/
-addBlockChecksum ::
-       (NonMember 'BlockChecksum s)
-    => Config s
-    -> Config ('BlockChecksum ': s)
-addBlockChecksum = error "addBlockChecksum: Unimplemented"
-
--- | Don't encode block checksum along with compressed data block.
---
--- /Unimplemented/
-removeBlockChecksum ::
-       (IsMember 'BlockChecksum s)
-    => Config s
-    -> Config (Delete 'BlockChecksum s)
-removeBlockChecksum = error "removeBlockChecksum: Unimplemented"
-
--- | Encode frame checksum after the end mark.
---
--- /Unimplemented/
-addFrameChecksum ::
-       (NonMember 'FrameChecksum s, IsMember 'EndMark s)
-    => Config s
-    -> Config ('FrameChecksum ': s)
-addFrameChecksum =
-    -- This is where we implement a proper validateFooter
-    error "addFrameChecksum: Unimplemented"
-
--- | Don't encode frame checksum after the endmark.
---
--- /Unimplemented/
-removeFrameChecksum ::
-       (IsMember 'FrameChecksum s)
-    => Config s
-    -> Config (Delete 'FrameChecksum s)
-removeFrameChecksum = error "removeFrameChecksum: Unimplemented"

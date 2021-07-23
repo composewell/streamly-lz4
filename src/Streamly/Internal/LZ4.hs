@@ -316,7 +316,7 @@ data CompressState st ctx prev
 compressChunksD ::
        MonadIO m
     => BlockFormat
-    -> Config a
+    -> FrameFormat
     -> Int
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
@@ -385,10 +385,10 @@ data ResizeState st arr
 resizeChunksD ::
        MonadIO m
     => BlockFormat
-    -> Config a
+    -> FrameFormat
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
-resizeChunksD cfg Config{hasEndMark, footerSize, validateFooter} (Stream.Stream step0 state0) =
+resizeChunksD cfg conf (Stream.Stream step0 state0) =
     Stream.Stream step (RInit state0)
 
     where
@@ -396,10 +396,14 @@ resizeChunksD cfg Config{hasEndMark, footerSize, validateFooter} (Stream.Stream 
     metaSize_ = metaSize cfg
     compSizeOffset_ = compSizeOffset cfg
 
+    hasEndMark_ = hasEndMark conf
+    footerSize_ = footerSize conf
+    validateFooter_ = validateFooter conf
+
     -- Unsafe function
     {-# INLINE isEndMark #-}
     isEndMark src
-        | hasEndMark = do
+        | hasEndMark_ = do
               em <- peek (castPtr src :: Ptr Int32)
               return $ em == endMark
         | otherwise = return False
@@ -439,7 +443,7 @@ resizeChunksD cfg Config{hasEndMark, footerSize, validateFooter} (Stream.Stream 
             Stream.Yield arr st1 -> liftIO $ process st1 arr
             Stream.Skip st1 -> return $ Stream.Skip $ RInit st1
             Stream.Stop ->
-                if hasEndMark
+                if hasEndMark_
                 then error "resizeChunksD: No end mark found"
                 else return Stream.Stop
     step _ (RProcess st arr) = liftIO $ process st arr
@@ -454,7 +458,7 @@ resizeChunksD cfg Config{hasEndMark, footerSize, validateFooter} (Stream.Stream 
     step gst (RFooter st buf) = do
         -- Warn if len > footerSize
         let len = Array.byteLength buf
-        if len < footerSize
+        if len < footerSize_
         then do
             r <- step0 gst st
             case r of
@@ -464,7 +468,7 @@ resizeChunksD cfg Config{hasEndMark, footerSize, validateFooter} (Stream.Stream 
                 Stream.Skip st1 -> return $ Stream.Skip $ RFooter st1 buf
                 Stream.Stop -> error "resizeChunksD: Incomplete footer"
         else do
-            res <- liftIO $ validateFooter buf
+            res <- liftIO $ validateFooter_ buf
             if res
             then return Stream.Stop
             else error "resizeChunksD: Invalid footer"
@@ -516,7 +520,7 @@ decompressChunksRawD cfg (Stream.Stream step0 state0) =
 
 decompressChunksWithD ::
        (MonadThrow m, MonadIO m)
-    => Parser.Parser m Word8 (BlockFormat, Config c)
+    => Parser.Parser m Word8 (BlockFormat, FrameFormat)
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
 decompressChunksWithD p s = do
@@ -536,14 +540,14 @@ data FLG =
 
 simpleFrameParserD ::
        (Monad m, MonadThrow m)
-    => Parser.Parser m Word8 (BlockFormat, Config '[ 'EndMark])
+    => Parser.Parser m Word8 (BlockFormat, FrameFormat)
 simpleFrameParserD = do
     _ <- assertMagic
     _flg <- parseFLG
     blockMaxSize <- parseBD
     _ <- assertHeaderChecksum
     let config =
-            (BlockFormat {blockSize = blockMaxSize} ,addEndMark defaultConfig)
+            (BlockFormat {blockSize = blockMaxSize}, defaultFrameFormat)
     Parser.fromPure config
 
     where
