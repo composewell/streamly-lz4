@@ -25,6 +25,7 @@ module Streamly.Internal.LZ4
 
     -- * Streaming
     , compressChunksD
+    , compressChunksDFrame
     , resizeChunksD
     , decompressChunksRawD
 
@@ -355,6 +356,23 @@ compressChunksD cfg speed0 (Stream.Stream step0 state0) =
             Stream.Stop -> return $ Stream.Skip $ CompressDone ctx
     step _ (CompressDone ctx) =
         liftIO $ c_freeStream ctx >> return Stream.Stop
+
+-- XXX This wont fuse and should be improved.
+-- XXX Only here for testing and benchmarking
+-- | See 'Streamly.LZ4.compress' for documentation.
+{-# INLINE_NORMAL compressChunksDFrame #-}
+compressChunksDFrame ::
+       MonadIO m
+    => BlockFormat
+    -> FrameFormat
+    -> Int
+    -> Stream.Stream m (Array.Array Word8)
+    -> Stream.Stream m (Array.Array Word8)
+compressChunksDFrame bf (FrameFormat {hasEndMark}) speed strm =
+    if hasEndMark
+    then compressChunksD bf speed strm
+             `Stream.append` Stream.fromPure endMarkArr
+    else compressChunksD bf speed strm
 
 --------------------------------------------------------------------------------
 -- Decompression
