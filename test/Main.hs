@@ -46,7 +46,7 @@ genNonEmptyListWith gen = do
 genAcceleration :: Gen Int
 genAcceleration = elements [-1..12]
 
-decompressCompressChunk :: Config a -> Int -> Array.Array Word8 -> IO ()
+decompressCompressChunk :: BlockFormat -> Int -> Array.Array Word8 -> IO ()
 decompressCompressChunk conf i arr = do
     lz4Ctx <- c_createStream
     lz4CtxD <- c_createStreamDecode
@@ -57,7 +57,7 @@ decompressCompressChunk conf i arr = do
     decompressed `shouldBe` arr
 
 decompressCompressChunk2 ::
-       Config a -> Int -> Array.Array Word8 -> Array.Array Word8 -> IO ()
+       BlockFormat -> Int -> Array.Array Word8 -> Array.Array Word8 -> IO ()
 decompressCompressChunk2 conf i arr1 arr2 = do
     lz4Ctx <- c_createStream
     lz4CtxD <- c_createStreamDecode
@@ -69,7 +69,7 @@ decompressCompressChunk2 conf i arr1 arr2 = do
     c_freeStreamDecode lz4CtxD
     (decompressed1, decompressed2) `shouldBe` (arr1, arr2)
 
-decompressResizedcompress :: Config a -> Int -> [Array.Array Word8] -> IO ()
+decompressResizedcompress :: BlockFormat -> Int -> [Array.Array Word8] -> IO ()
 decompressResizedcompress conf i lst =
     let strm = Stream.fromList lst
      in do lst1 <-
@@ -80,7 +80,7 @@ decompressResizedcompress conf i lst =
 
     decompressChunksRaw = fromStreamD . decompressChunksRawD conf . toStreamD
 
-decompressCompress :: Config a -> Int -> Int -> [Array.Array Word8] -> IO ()
+decompressCompress :: BlockFormat -> Int -> Int -> [Array.Array Word8] -> IO ()
 decompressCompress conf bufsize i lst = do
     let strm = Stream.fromList lst
     withSystemTempFile "LZ4" $ \tmp tmpH -> do
@@ -94,6 +94,37 @@ decompressCompress conf bufsize i lst = do
                           & decompressChunks conf
         lst1 `shouldBe` lst
 
+decompressCompressFrame ::
+       BlockFormat -> FrameFormat -> Int -> Int -> [Array.Array Word8] -> IO ()
+decompressCompressFrame bf ff bufsize i lst = do
+    let strm = Stream.fromList lst
+    withSystemTempFile "LZ4" $ \tmp tmpH -> do
+        compressChunksFrame strm & Handle.putChunks tmpH
+        hClose tmpH
+        lst1 <-
+            Stream.toList
+                $ Stream.bracket_ (openFile tmp ReadMode) hClose
+                $ \h ->
+                      Stream.unfold Handle.readChunksWithBufferOf (bufsize, h)
+                          & decompressChunksFrame
+        lst1 `shouldBe` lst
+
+    where
+
+    decompressChunksFrame
+        :: Stream.SerialT IO (Array.Array Word8)
+        -> Stream.SerialT IO (Array.Array Word8)
+    decompressChunksFrame =
+        fromStreamD . decompressChunksRawD bf . resizeChunksD bf ff . toStreamD
+
+    compressChunksFrame
+        :: Stream.SerialT IO (Array.Array Word8)
+        -> Stream.SerialT IO (Array.Array Word8)
+    compressChunksFrame strm =
+        if hasEndMark ff
+        then (fromStreamD . compressChunksD bf i . toStreamD) strm
+                 `Stream.append` Stream.fromPure endMarkArr
+        else (fromStreamD . compressChunksD bf i . toStreamD) strm
 
 decompressWithCompress :: Int -> Int -> [Array.Array Word8] -> IO ()
 decompressWithCompress bufsize i lst = do
@@ -108,10 +139,10 @@ decompressWithCompress bufsize i lst = do
         headerList = magicLE ++ [flg, bd, headerChk]
         header = Stream.fromList headerList
     headerArr <- Stream.fold (Array.writeN (length headerList)) header
-    frameConfig <- Stream.parseD simpleFrameParserD header
+    (bf, ff) <- Stream.parseD simpleFrameParserD header
     let strm = Stream.fromList lst
     withSystemTempFile "LZ4" $ \tmp tmpH -> do
-        compressChunks frameConfig i strm
+        compressChunksFrame bf ff i strm
             & Stream.cons headerArr
             & Handle.putChunks tmpH
         hClose tmpH
@@ -125,14 +156,26 @@ decompressWithCompress bufsize i lst = do
 
     where
 
+    compressChunksFrame
+        :: BlockFormat
+        -> FrameFormat
+        -> Int
+        -> Stream.SerialT IO (Array.Array Word8)
+        -> Stream.SerialT IO (Array.Array Word8)
+    compressChunksFrame bf ff i_ strm =
+        if hasEndMark ff
+        then (fromStreamD . compressChunksD bf i_ . toStreamD) strm
+                 `Stream.append` Stream.fromPure endMarkArr
+        else (fromStreamD . compressChunksD bf i_ . toStreamD) strm
+
     decompressWith_ ::
            Stream.SerialT IO (Array.Array Word8)
         -> Stream.SerialT IO (Array.Array Word8)
     decompressWith_ =
         fromStreamD . decompressChunksWithD simpleFrameParserD . toStreamD
 
-resizeIdempotence :: Config a -> Property
-resizeIdempotence conf  =
+resizeIdempotence :: BlockFormat -> Property
+resizeIdempotence conf =
     forAll ((,) <$> genAcceleration <*> genArrayW8List)
         $ \(acc, w8List) -> do
               let strm = compressChunks conf acc $ Stream.fromList w8List
@@ -142,7 +185,8 @@ resizeIdempotence conf  =
 
     where
 
-    resizeChunks = fromStreamD . resizeChunksD conf . toStreamD
+    resizeChunks =
+        fromStreamD . resizeChunksD conf defaultFrameFormat . toStreamD
 
 main :: IO ()
 main = do
@@ -153,34 +197,37 @@ main = do
             $ genArrayW8LargeHC (1024 * 10, 1024 * 64)
     hspec $ do
         describe "Idempotence" $
-            it "resize" (resizeIdempotence defaultConfig)
+            it "resize" (resizeIdempotence defaultBlockFormat)
         describe "Identity" $ do
-            propsChunk defaultConfig
-            propsChunk2 defaultConfig
-            propsSimple defaultConfig
+            propsChunk defaultBlockFormat
+            propsChunk2 defaultBlockFormat
+            propsSimple defaultBlockFormat
             forM_ [-1, 5, 12, 100]
                 $ \i ->
                       forM_ [1, 512, 32 * 1024, 256 * 1024]
                           $ \bufsize -> do
-                                propsBig defaultConfig bufsize i large
+                                propsBig defaultBlockFormat bufsize i large
                                 describe "Highly compressible"
-                                    $ propsBig defaultConfig bufsize i largeHC
-            describe "removeUncompressedSize (1024 * 100) defaultConfig" $ do
-                let config = removeUncompressedSize (1024 * 100) defaultConfig
+                                    $ propsBig
+                                          defaultBlockFormat bufsize i largeHC
+            describe "setBlockMaxSize BlockMax256KB defaultBlockFormat" $ do
+                let config = setBlockMaxSize BlockMax256KB defaultBlockFormat
                 propsChunk config
                 propsChunk2 config
                 propsBig config 512 5 largeHC
-            describe "addEndMark defaultConfig" $ do
-                let config = addEndMark defaultConfig
-                propsSimpleDecompressCompress config
-                propsBigDecompressCompress config 512 5 largeHC
-            describe "addEndMark . removeUncompressedSize" $ do
-                let config =
-                        defaultConfig
-                            & removeUncompressedSize (1024 * 100)
-                            & addEndMark
-                propsSimpleDecompressCompress config
-                propsBigDecompressCompress config 512 5 largeHC
+            describe "defaultBlockFormat" $ do
+                propsSimpleDecompressCompress defaultBlockFormat
+                propsBigDecompressCompress defaultBlockFormat 512 5 large
+                propsBigDecompressCompress defaultBlockFormat 512 5 largeHC
+            describe "addEndMark defaultFrameFormat" $ do
+                let ff = addEndMark defaultFrameFormat
+                propsFrame defaultBlockFormat ff 512 5 large
+                propsFrame defaultBlockFormat ff 512 5 largeHC
+            describe "addEndMark . setBlockMaxSize BlockMax256KB" $ do
+                let bf = setBlockMaxSize BlockMax256KB defaultBlockFormat
+                    ff = addEndMark defaultFrameFormat
+                propsFrame bf ff 512 5 large
+                propsFrame bf ff 512 5 largeHC
             describe "parse config (decompressWith)" $ do
                 propsDecompressWithCompress 512 5 largeHC
 
@@ -203,6 +250,10 @@ main = do
         it
             ("decompressWith . compress == id")
             (decompressWithCompress bufsize i l)
+
+    propsFrame bf ff bufsize i l = do
+        it ("decompressFrame . compressFrame (" ++ show i ++ ") == id")
+            $ decompressCompressFrame bf ff bufsize i l
 
     propsSimple conf = do
         it "decompressResized . compress == id"
