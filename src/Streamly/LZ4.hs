@@ -39,8 +39,10 @@
 module Streamly.LZ4
     (
     -- * Configuration
-      Config
-    , defaultConfig
+      FrameFormat
+    , defaultFrameFormat
+    , BlockFormat
+    , defaultBlockFormat
 
     -- * Combinators
     , compressChunks
@@ -88,7 +90,7 @@ import Streamly.Internal.LZ4
 compressChunks ::
        MonadIO m
     => BlockFormat
-    -> Config a
+    -> FrameFormat
     -> Int
     -> SerialT m (Array Word8)
     -> SerialT m (Array Word8)
@@ -109,7 +111,7 @@ compressChunks bf c i m = fromStreamD (compressChunksD bf c i (toStreamD m))
 decompressChunks ::
        MonadIO m
     => BlockFormat
-    -> Config a
+    -> FrameFormat
     -> SerialT m (Array Word8)
     -> SerialT m (Array Word8)
 decompressChunks bf c =
