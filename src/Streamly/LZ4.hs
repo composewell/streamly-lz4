@@ -110,8 +110,9 @@ compressChunks bf i m = fromStreamD (compressChunksD bf i (toStreamD m))
 decompressChunks ::
        MonadIO m
     => BlockFormat
-    -> FrameFormat
     -> SerialT m (Array Word8)
     -> SerialT m (Array Word8)
-decompressChunks bf c =
-    fromStreamD . decompressChunksRawD bf . resizeChunksD bf c . toStreamD
+decompressChunks bf =
+    fromStreamD
+        . decompressChunksRawD bf
+        . resizeChunksD bf defaultFrameFormat . toStreamD
