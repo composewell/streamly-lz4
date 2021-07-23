@@ -316,11 +316,10 @@ data CompressState st ctx prev
 compressChunksD ::
        MonadIO m
     => BlockFormat
-    -> FrameFormat
     -> Int
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
-compressChunksD cfg conf speed0 (Stream.Stream step0 state0) =
+compressChunksD cfg speed0 (Stream.Stream step0 state0) =
     Stream.Stream step (CompressInit state0)
 
     where
@@ -353,11 +352,7 @@ compressChunksD cfg conf speed0 (Stream.Stream step0 state0) =
                     return $ Stream.Yield arr1 (CompressDo st1 ctx (Just arr))
             Stream.Skip st1 ->
                 return $ Stream.Skip $ CompressDo st1 ctx prev
-            Stream.Stop ->
-                return
-                    $ if hasEndMark conf
-                      then Stream.Yield endMarkArr $ CompressDone ctx
-                      else Stream.Skip $ CompressDone ctx
+            Stream.Stop -> return $ Stream.Skip $ CompressDone ctx
     step _ (CompressDone ctx) =
         liftIO $ c_freeStream ctx >> return Stream.Stop
 
