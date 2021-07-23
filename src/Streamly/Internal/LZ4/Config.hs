@@ -20,11 +20,13 @@ module Streamly.Internal.LZ4.Config
     , endMarkArr
     , FrameFormat(..)
     , defaultFrameFormat
+    , addEndMark
     , footerSize
     , validateFooter
     , BlockFormat(..)
     , defaultBlockFormat
     , BlockSize(..)
+    , setBlockMaxSize
     , metaSize
     , setUncompSize
     , getUncompSize
@@ -94,6 +96,10 @@ validateFooter _ _ = return True
 defaultFrameFormat :: FrameFormat
 defaultFrameFormat = FrameFormat {hasEndMark = False}
 
+-- | Whether the frame footer has an end mark.
+addEndMark :: FrameFormat -> FrameFormat
+addEndMark ff = ff {hasEndMark = True}
+
 {-
 
 -- Header fields
@@ -107,10 +113,6 @@ hasDictionaryId :: Bool -> FrameFormat -> FrameFormat
 hasDictionaryId = undefined
 
 -- Footer fields
-
--- | Whether the frame footer has an end mark.
-hasEndMark :: Bool -> FrameFormat -> FrameFormat
-hasEndMark = undefined
 
 -- | Whether the frame footer has a content checksum after the end mark. If it
 -- is True then it implicitly indicates that hasEndMark is set to True.
@@ -180,11 +182,11 @@ dataOffset BlockFormat {blockSize} =
 compSizeOffset :: BlockFormat -> Int
 compSizeOffset _ = 0
 
-{-
-
 -- | Set the maximum uncompressed size of the data block.
 setBlockMaxSize :: BlockSize -> BlockFormat -> BlockFormat
-setBlockMaxSize = undefined
+setBlockMaxSize bs bf = bf {blockSize = bs}
+
+{-
 
 -- | When set, future blocks may depend on the past blocks. Block dependency
 -- improves compression ratio, especially for small blocks. On the other hand,
