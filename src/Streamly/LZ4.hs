@@ -39,9 +39,7 @@
 module Streamly.LZ4
     (
     -- * Configuration
-      FrameFormat
-    , defaultFrameFormat
-    , BlockFormat
+      BlockFormat
     , defaultBlockFormat
 
     -- * Combinators
