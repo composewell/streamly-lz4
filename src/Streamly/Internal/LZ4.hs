@@ -560,7 +560,8 @@ simpleFrameParserD = do
     blockMaxSize <- parseBD
     _ <- assertHeaderChecksum
     let config =
-            (BlockFormat {blockSize = blockMaxSize}, defaultFrameFormat)
+            (BlockFormat {blockSize = blockMaxSize}
+            , FrameFormat {hasEndMark = True})
     Parser.fromPure config
 
     where

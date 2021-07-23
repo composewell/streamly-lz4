@@ -92,7 +92,7 @@ validateFooter _ _ = return True
 -- The format setter functions can be used to modify the format as desired.
 
 defaultFrameFormat :: FrameFormat
-defaultFrameFormat = FrameFormat {hasEndMark = True}
+defaultFrameFormat = FrameFormat {hasEndMark = False}
 
 {-
 
