@@ -90,11 +90,10 @@ import Streamly.Internal.LZ4
 compressChunks ::
        MonadIO m
     => BlockFormat
-    -> FrameFormat
     -> Int
     -> SerialT m (Array Word8)
     -> SerialT m (Array Word8)
-compressChunks bf c i m = fromStreamD (compressChunksD bf c i (toStreamD m))
+compressChunks bf i m = fromStreamD (compressChunksD bf i (toStreamD m))
 
 --------------------------------------------------------------------------------
 -- Decompression
