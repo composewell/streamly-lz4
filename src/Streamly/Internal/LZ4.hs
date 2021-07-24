@@ -1,5 +1,3 @@
-{-# LANGUAGE NamedFieldPuns #-}
-
 -- |
 -- Module      : Streamly.Internal.LZ4
 -- Copyright   : (c) 2020 Composewell Technologies
@@ -254,10 +252,10 @@ decompressChunk ::
 decompressChunk cfg ctx arr = do
     Array.unsafeAsPtr arr
         $ \src -> do
-              let hdrCompLen :: Ptr Int32 = src `plusPtr` compSizeOffset_
-                  compData = src `plusPtr` dataOffset_
-                  arrDataLen = Array.byteLength arr - metaSize_
-              uncompLenC <- i32ToCInt <$> getUncompSize_ src
+              let hdrCompLen :: Ptr Int32 = src `plusPtr` compSizeOffset cfg
+                  compData = src `plusPtr` dataOffset cfg
+                  arrDataLen = Array.byteLength arr - metaSize cfg
+              uncompLenC <- i32ToCInt <$> getUncompSize cfg src
               compLenC <- i32ToCInt <$> peek hdrCompLen
               let compLen = cIntToInt compLenC
                   maxCompLenC = lz4_MAX_OUTPUT_SIZE
@@ -291,13 +289,6 @@ decompressChunk cfg ctx arr = do
               -- We cannot shrink the array here, because that would reallocate
               -- the array invalidating the cached dictionary.
               return $ Array.unsafeFreeze decompArr
-
-    where
-
-    metaSize_ = metaSize cfg
-    compSizeOffset_ = compSizeOffset cfg
-    dataOffset_ = dataOffset cfg
-    getUncompSize_ = getUncompSize cfg
 
 --------------------------------------------------------------------------------
 -- Compression
@@ -368,7 +359,7 @@ compressChunksDFrame ::
     -> Int
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
-compressChunksDFrame bf (FrameFormat {hasEndMark}) speed strm =
+compressChunksDFrame bf FrameFormat {hasEndMark} speed strm =
     if hasEndMark
     then compressChunksD bf speed strm
              `Stream.append` Stream.fromPure endMarkArr

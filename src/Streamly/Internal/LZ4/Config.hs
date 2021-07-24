@@ -1,9 +1,4 @@
-{-# LANGUAGE GADTs
-  , TypeOperators
-  , ConstraintKinds
-  , TypeFamilies
-  , DataKinds
-  , NamedFieldPuns #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 -- |
 -- Module      : Streamly.Internal.LZ4.Config
@@ -71,7 +66,7 @@ endMarkArr = coerce $ Array.fromListN 1 [endMark]
 -- This also means that block format cannot be static.
 
 -- This type will be used for frame generation and parsing.
-data FrameFormat =
+newtype FrameFormat =
     FrameFormat
         { hasEndMark :: Bool
         }
@@ -127,7 +122,7 @@ hasContentChecksum = undefined
 
 -- This type is to be used in decompress/compress chunks APIs. It will be
 -- determined by parsing the frame.
-data BlockFormat =
+newtype BlockFormat =
     BlockFormat
         { blockSize :: BlockSize
         }
