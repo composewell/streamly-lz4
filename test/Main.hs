@@ -46,7 +46,7 @@ genNonEmptyListWith gen = do
 genAcceleration :: Gen Int
 genAcceleration = elements [-1..12]
 
-decompressCompressChunk :: BlockFormat -> Int -> Array.Array Word8 -> IO ()
+decompressCompressChunk :: BlockConfig -> Int -> Array.Array Word8 -> IO ()
 decompressCompressChunk conf i arr = do
     lz4Ctx <- c_createStream
     lz4CtxD <- c_createStreamDecode
@@ -57,7 +57,7 @@ decompressCompressChunk conf i arr = do
     decompressed `shouldBe` arr
 
 decompressCompressChunk2 ::
-       BlockFormat -> Int -> Array.Array Word8 -> Array.Array Word8 -> IO ()
+       BlockConfig -> Int -> Array.Array Word8 -> Array.Array Word8 -> IO ()
 decompressCompressChunk2 conf i arr1 arr2 = do
     lz4Ctx <- c_createStream
     lz4CtxD <- c_createStreamDecode
@@ -69,7 +69,7 @@ decompressCompressChunk2 conf i arr1 arr2 = do
     c_freeStreamDecode lz4CtxD
     (decompressed1, decompressed2) `shouldBe` (arr1, arr2)
 
-decompressResizedcompress :: BlockFormat -> Int -> [Array.Array Word8] -> IO ()
+decompressResizedcompress :: BlockConfig -> Int -> [Array.Array Word8] -> IO ()
 decompressResizedcompress conf i lst =
     let strm = Stream.fromList lst
      in do lst1 <-
@@ -80,7 +80,7 @@ decompressResizedcompress conf i lst =
 
     decompressChunksRaw = fromStreamD . decompressChunksRawD conf . toStreamD
 
-decompressCompress :: BlockFormat -> Int -> Int -> [Array.Array Word8] -> IO ()
+decompressCompress :: BlockConfig -> Int -> Int -> [Array.Array Word8] -> IO ()
 decompressCompress conf bufsize i lst = do
     let strm = Stream.fromList lst
     withSystemTempFile "LZ4" $ \tmp tmpH -> do
@@ -94,8 +94,12 @@ decompressCompress conf bufsize i lst = do
                           & decompressChunks conf
         lst1 `shouldBe` lst
 
+{-# INLINE endMarkArr #-}
+endMarkArr :: Array.Array Word8
+endMarkArr = Array.fromListN 4 [0,0,0,0]
+
 decompressCompressFrame ::
-       BlockFormat -> FrameFormat -> Int -> Int -> [Array.Array Word8] -> IO ()
+       BlockConfig -> FrameConfig -> Int -> Int -> [Array.Array Word8] -> IO ()
 decompressCompressFrame bf ff bufsize i lst = do
     let strm = Stream.fromList lst
     withSystemTempFile "LZ4" $ \tmp tmpH -> do
@@ -157,8 +161,8 @@ decompressWithCompress bufsize i lst = do
     where
 
     compressChunksFrame
-        :: BlockFormat
-        -> FrameFormat
+        :: BlockConfig
+        -> FrameConfig
         -> Int
         -> Stream.SerialT IO (Array.Array Word8)
         -> Stream.SerialT IO (Array.Array Word8)
@@ -174,7 +178,7 @@ decompressWithCompress bufsize i lst = do
     decompressWith_ =
         fromStreamD . decompressChunksWithD simpleFrameParserD . toStreamD
 
-resizeIdempotence :: BlockFormat -> Property
+resizeIdempotence :: BlockConfig -> Property
 resizeIdempotence conf =
     forAll ((,) <$> genAcceleration <*> genArrayW8List)
         $ \(acc, w8List) -> do
@@ -186,7 +190,7 @@ resizeIdempotence conf =
     where
 
     resizeChunks =
-        fromStreamD . resizeChunksD conf defaultFrameFormat . toStreamD
+        fromStreamD . resizeChunksD conf defaultFrameConfig . toStreamD
 
 main :: IO ()
 main = do
@@ -197,37 +201,38 @@ main = do
             $ genArrayW8LargeHC (1024 * 10, 1024 * 64)
     hspec $ do
         describe "Idempotence" $
-            it "resize" (resizeIdempotence defaultBlockFormat)
+            it "resize" (resizeIdempotence defaultBlockConfig)
         describe "Identity" $ do
-            propsChunk defaultBlockFormat
-            propsChunk2 defaultBlockFormat
-            propsSimple defaultBlockFormat
+            propsChunk defaultBlockConfig
+            propsChunk2 defaultBlockConfig
+            propsSimple defaultBlockConfig
             forM_ [-1, 5, 12, 100]
                 $ \i ->
                       forM_ [1, 512, 32 * 1024, 256 * 1024]
                           $ \bufsize -> do
-                                propsBig defaultBlockFormat bufsize i large
+                                propsBig defaultBlockConfig bufsize i large
                                 describe "Highly compressible"
                                     $ propsBig
-                                          defaultBlockFormat bufsize i largeHC
-            describe "setBlockMaxSize BlockMax256KB defaultBlockFormat" $ do
-                let config = setBlockMaxSize BlockMax256KB defaultBlockFormat
+                                          defaultBlockConfig bufsize i largeHC
+            describe "setBlockMaxSize BlockMax256KB defaultBlockConfig" $ do
+                let config = setBlockMaxSize BlockMax256KB defaultBlockConfig
                 propsChunk config
                 propsChunk2 config
                 propsBig config 512 5 largeHC
-            describe "defaultBlockFormat" $ do
-                propsSimpleDecompressCompress defaultBlockFormat
-                propsBigDecompressCompress defaultBlockFormat 512 5 large
-                propsBigDecompressCompress defaultBlockFormat 512 5 largeHC
-            describe "addEndMark defaultFrameFormat" $ do
-                let ff = addEndMark defaultFrameFormat
-                propsFrame defaultBlockFormat ff 512 5 large
-                propsFrame defaultBlockFormat ff 512 5 largeHC
-            describe "addEndMark . setBlockMaxSize BlockMax256KB" $ do
-                let bf = setBlockMaxSize BlockMax256KB defaultBlockFormat
-                    ff = addEndMark defaultFrameFormat
-                propsFrame bf ff 512 5 large
-                propsFrame bf ff 512 5 largeHC
+            describe "defaultBlockConfig" $ do
+                propsSimpleDecompressCompress defaultBlockConfig
+                propsBigDecompressCompress defaultBlockConfig 512 5 large
+                propsBigDecompressCompress defaultBlockConfig 512 5 largeHC
+            describe "setFrameEndMark True defaultFrameConfig" $ do
+                let ff = setFrameEndMark True defaultFrameConfig
+                propsFrame defaultBlockConfig ff 512 5 large
+                propsFrame defaultBlockConfig ff 512 5 largeHC
+            describe "setFrameEndMark True . setBlockMaxSize BlockMax256KB"
+                $ do
+                    let bf = setBlockMaxSize BlockMax256KB defaultBlockConfig
+                        ff = setFrameEndMark True defaultFrameConfig
+                    propsFrame bf ff 512 5 large
+                    propsFrame bf ff 512 5 largeHC
             describe "parse config (decompressWith)" $ do
                 propsDecompressWithCompress 512 5 largeHC
 
@@ -248,7 +253,7 @@ main = do
 
     propsDecompressWithCompress bufsize i l = do
         it
-            ("decompressWith . compress == id")
+            "decompressWith . compress == id"
             (decompressWithCompress bufsize i l)
 
     propsFrame bf ff bufsize i l = do

@@ -1,5 +1,3 @@
-{-# LANGUAGE NamedFieldPuns #-}
-
 -- |
 -- Module      : Streamly.Internal.LZ4.Config
 -- Copyright   : (c) 2020 Composewell Technologies
@@ -8,134 +6,104 @@
 -- Stability   : experimental
 -- Portability : GHC
 --
+-- Frame and block configuration settings for LZ4.
+--
 module Streamly.Internal.LZ4.Config
     (
-    -- * Configuration
-      endMark
-    , endMarkArr
-    , FrameFormat(..)
-    , defaultFrameFormat
-    , addEndMark
-    , footerSize
-    , validateFooter
-    , BlockFormat(..)
-    , defaultBlockFormat
+    -- * LZ4 Frame Format
+    -- | Configuration for a frame consisting of a series of blocks.
+      FrameConfig(..)
+    , setFrameContentSize
+    , setFrameContentChecksum
+    , setFrameDictionaryId
+    , setFrameBlockIndependence
+    , setFrameBlockChecksum
+    , setFrameEndMark
+    , defaultFrameConfig
+
+    -- * LZ4 Block Format
+    -- | Configuration for a single compressed block.
+    , BlockConfig(..)
     , BlockSize(..)
     , setBlockMaxSize
-    , metaSize
-    , setUncompSize
-    , getUncompSize
-    , dataOffset
-    , compSizeOffset
+    , setBlockIndependence
+    , setBlockChecksum
+    , defaultBlockConfig
     )
 
 where
 
 --------------------------------------------------------------------------------
--- Imports
---------------------------------------------------------------------------------
-
-import Data.Coerce (coerce)
-import Data.Int (Int32)
-import Data.Word (Word8)
-import Foreign.Ptr (Ptr, castPtr, plusPtr)
-import Foreign.Storable (peek, poke)
-
-import qualified Streamly.Internal.Data.Array.Foreign as Array
-
---------------------------------------------------------------------------------
--- Helpers
---------------------------------------------------------------------------------
-
-{-# INLINE endMark #-}
-endMark :: Int32
-endMark = 0
-
-{-# INLINE endMarkArr #-}
-endMarkArr :: Array.Array Word8
-endMarkArr = coerce $ Array.fromListN 1 [endMark]
-
---------------------------------------------------------------------------------
 -- Frame Configuration
 --------------------------------------------------------------------------------
 
--- XXX We need to separate the BlockFormat and FrameFormat configuration. The
--- block level combinators need to accept the block format configuration,
--- whereas the frame parsing combinators need to take frame format config.
--- The block format config would be dynamic depending on the frame format.
--- This also means that block format cannot be static.
-
--- This type will be used for frame generation and parsing.
-newtype FrameFormat =
-    FrameFormat
+-- | Defines the LZ4 frame format.
+newtype FrameConfig =
+    FrameConfig
         { hasEndMark :: Bool
         }
-
-footerSize :: FrameFormat -> Int
-footerSize FrameFormat {hasEndMark} =
-    if hasEndMark
-    then 4
-    else 0
-
-validateFooter :: FrameFormat -> Array.Array Word8 -> IO Bool
-validateFooter _ _ = return True
-
--- By default the frame format is defined as follows:
--- * hasContentSize is False
--- * hasDictionaryId is False
--- * hasEndMark is True
--- * hasContentChecksum is False
---
--- The format setter functions can be used to modify the format as desired.
-
-defaultFrameFormat :: FrameFormat
-defaultFrameFormat = FrameFormat {hasEndMark = False}
-
--- | Whether the frame footer has an end mark.
-addEndMark :: FrameFormat -> FrameFormat
-addEndMark ff = ff {hasEndMark = True}
-
-{-
 
 -- Header fields
 
 -- | Whether the frame header has a content size field.
-hasContentSize :: Bool -> FrameFormat -> FrameFormat
-hasContentSize = undefined
+--
+-- /Unimplemented/
+setFrameContentSize :: Bool -> FrameConfig -> FrameConfig
+setFrameContentSize = undefined
 
 -- | Whether the frame header has a dictionary ID field.
-hasDictionaryId :: Bool -> FrameFormat -> FrameFormat
-hasDictionaryId = undefined
+--
+-- /Unimplemented/
+setFrameDictionaryId :: Bool -> FrameConfig -> FrameConfig
+setFrameDictionaryId = undefined
+
+-- | When 'False', future blocks in the frame may depend on the past blocks.
+-- Block dependency improves compression ratio, especially for small blocks. On
+-- the other hand, it makes random access or multi-threaded decoding
+-- impossible.
+--
+-- /Unimplemented/
+setFrameBlockIndependence :: Bool -> FrameConfig -> FrameConfig
+setFrameBlockIndependence = undefined
+
+-- | Indicate whether blocks in the frame are followed by a 4-byte checksum
+-- field.
+--
+-- /Unimplemented/
+setFrameBlockChecksum :: Bool -> FrameConfig -> FrameConfig
+setFrameBlockChecksum = undefined
 
 -- Footer fields
 
--- | Whether the frame footer has a content checksum after the end mark. If it
--- is True then it implicitly indicates that hasEndMark is set to True.
-hasContentChecksum :: Bool -> FrameFormat -> FrameFormat
-hasContentChecksum = undefined
+-- | Whether the frame footer has an end mark.
+setFrameEndMark :: Bool -> FrameConfig -> FrameConfig
+setFrameEndMark val cfg = cfg {hasEndMark = val}
 
--}
+-- | Whether the frame footer has a content checksum after the end mark. If it
+-- is True then it implicitly indicates that setEndMark is set to True.
+--
+-- /Unimplemented/
+setFrameContentChecksum :: Bool -> FrameConfig -> FrameConfig
+setFrameContentChecksum = undefined
+
+-- XXX setEndMark should be True by default to conform to the standard.
+--
+-- | The default settings are:
+--
+-- * 'setFrameContentSize' 'False'
+-- * 'setFrameDictionaryId' 'False'
+-- * 'setFrameBlockIndependence' 'False'
+-- * 'setFrameBlockChecksum' 'False'
+-- * 'setFrameEndMark' 'False'
+--
+defaultFrameConfig :: FrameConfig
+defaultFrameConfig = FrameConfig
+    { hasEndMark = False
+    }
 
 --------------------------------------------------------------------------------
 -- Block Configuration
 --------------------------------------------------------------------------------
-
--- This type is to be used in decompress/compress chunks APIs. It will be
--- determined by parsing the frame.
-newtype BlockFormat =
-    BlockFormat
-        { blockSize :: BlockSize
-        }
-
--- By default the block format is defined as follows:
--- * BlockSize is BlockHasSize
--- * Block dependence is False
--- * Block checksum is False
---
--- The format setter functions can be used to modify the format as desired.
-
-defaultBlockFormat :: BlockFormat
-defaultBlockFormat = BlockFormat {blockSize = BlockHasSize}
 
 -- | Maximum uncompressed size of a data block.
 data BlockSize =
@@ -147,50 +115,47 @@ data BlockSize =
     | BlockMax1MB
     | BlockMax4MB
 
-metaSize :: BlockFormat -> Int
-metaSize BlockFormat {blockSize} =
-    case blockSize of
-        BlockHasSize -> 8
-        _ -> 4
-
-setUncompSize :: BlockFormat -> Ptr Word8 -> Int32 -> IO ()
-setUncompSize BlockFormat {blockSize} =
-    case blockSize of
-        BlockHasSize -> \src -> poke (castPtr src `plusPtr` 4)
-        _ -> \_ _ -> return ()
-
-getUncompSize :: BlockFormat -> Ptr Word8 -> IO Int32
-getUncompSize BlockFormat {blockSize} =
-    case blockSize of
-        BlockHasSize -> \src -> peek (castPtr src `plusPtr` 4 :: Ptr Int32)
-        BlockMax64KB -> \_ -> return $ 64 * 1024
-        BlockMax256KB -> \_ -> return $ 256 * 1024
-        BlockMax1MB -> \_ -> return $ 1024 * 1024
-        BlockMax4MB -> \_ -> return $ 4 * 1024 * 1024
-
-dataOffset :: BlockFormat -> Int
-dataOffset BlockFormat {blockSize} =
-    case blockSize of
-        BlockHasSize -> 8
-        _ -> 4
-
-compSizeOffset :: BlockFormat -> Int
-compSizeOffset _ = 0
+-- | Defines the LZ4 compressed block format.
+--
+-- @
+--  ----------------------------------------------------------------------
+-- | Compressed length | Uncompressed length | Data | Checksum            |
+-- |       (4 byte)    | (4 byte) (optional) |      | (4 byte) (optional) |
+--  ----------------------------------------------------------------------
+-- @
+--
+-- Compressed length is the length of the @Data@ field only.  Uncompressed
+-- length is present only when the 'setBlockMaxSize' is set to 'BlockHasSize'
+-- this is the length of the block when it is uncompressed. Checksum is present
+-- when 'setBlockChecksum' is set to 'True'. The 4-byte fields are stored in
+-- machine byte order.
+--
+newtype BlockConfig =
+    BlockConfig
+        { blockSize :: BlockSize
+        }
 
 -- | Set the maximum uncompressed size of the data block.
-setBlockMaxSize :: BlockSize -> BlockFormat -> BlockFormat
-setBlockMaxSize bs bf = bf {blockSize = bs}
+setBlockMaxSize :: BlockSize -> BlockConfig -> BlockConfig
+setBlockMaxSize bs cfg = cfg {blockSize = bs}
 
-{-
+-- | When 'False', the block may depend on the past blocks.
+--
+-- /Unimplemented/
+setBlockIndependence :: Bool -> BlockConfig -> BlockConfig
+setBlockIndependence = undefined
 
--- | When set, future blocks may depend on the past blocks. Block dependency
--- improves compression ratio, especially for small blocks. On the other hand,
--- it makes random access or multi-threaded decoding impossible.
-setBlockDependence :: Bool -> BlockFormat -> BlockFormat
-setBlockDependence = undefined
-
--- | Indicate whether blocks are followed by a 4-byte checksum field.
-setBlockChecksum :: Bool -> BlockFormat -> BlockFormat
+-- | Indicate whether the block is followed by a 4-byte checksum field.
+--
+-- /Unimplemented/
+setBlockChecksum :: Bool -> BlockConfig -> BlockConfig
 setBlockChecksum = undefined
 
--}
+-- | The default settings are:
+--
+-- * 'setBlockMaxSize' 'BlockHasSize'
+-- * 'setBlockIndependence' 'False'
+-- * 'setBlockChecksum' 'False'
+--
+defaultBlockConfig :: BlockConfig
+defaultBlockConfig = BlockConfig {blockSize = BlockHasSize}

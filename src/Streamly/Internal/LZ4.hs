@@ -1,13 +1,13 @@
+{-# LANGUAGE NamedFieldPuns #-}
 -- |
 -- Module      : Streamly.Internal.LZ4
 -- Copyright   : (c) 2020 Composewell Technologies
---
 -- License     : Apache-2.0
 -- Maintainer  : streamly@composewell.com
 -- Stability   : experimental
 -- Portability : GHC
 --
--- Internal module subject to change without notice.
+-- LZ4 compression and decompression routines.
 --
 module Streamly.Internal.LZ4
     (
@@ -17,34 +17,21 @@ module Streamly.Internal.LZ4
     , c_createStreamDecode
     , c_freeStreamDecode
 
-    -- * Primitives
+    -- * Block compression and decompression
     , compressChunk
     , decompressChunk
 
-    -- * Streaming
+    -- * Stream compression and decompression
     , compressChunksD
     , resizeChunksD
     , decompressChunksRawD
-
-    -- * Parsing
-    , simpleFrameParserD
     , decompressChunksWithD
+
+    -- * Parsing LZ4 Frames
+    , simpleFrameParserD
     )
 
 where
-
---------------------------------------------------------------------------------
--- Developer notes
---------------------------------------------------------------------------------
-
--- ## Fusion plugin
--- The annotations 'Fuse' on the data types don't have have any effect unless
--- fusion-plugin is enabled.
---
--- ## Debugging
--- This module also provides some debugging combinators for inspecting the
--- stream after compression. The debugging only work on streams of resized
--- arrays.
 
 --------------------------------------------------------------------------------
 -- Imports
@@ -163,8 +150,42 @@ cIntToI32 = coerce
 i32ToCInt :: Int32 -> CInt
 i32ToCInt = coerce
 
+-------------------------------------------------------------------------------
+-- Block Configuration access
+-------------------------------------------------------------------------------
+
+metaSize :: BlockConfig -> Int
+metaSize BlockConfig {blockSize} =
+    case blockSize of
+        BlockHasSize -> 8
+        _ -> 4
+
+setUncompSize :: BlockConfig -> Ptr Word8 -> Int32 -> IO ()
+setUncompSize BlockConfig {blockSize} =
+    case blockSize of
+        BlockHasSize -> \src -> poke (castPtr src `plusPtr` 4)
+        _ -> \_ _ -> return ()
+
+getUncompSize :: BlockConfig -> Ptr Word8 -> IO Int32
+getUncompSize BlockConfig {blockSize} =
+    case blockSize of
+        BlockHasSize -> \src -> peek (castPtr src `plusPtr` 4 :: Ptr Int32)
+        BlockMax64KB -> \_ -> return $ 64 * 1024
+        BlockMax256KB -> \_ -> return $ 256 * 1024
+        BlockMax1MB -> \_ -> return $ 1024 * 1024
+        BlockMax4MB -> \_ -> return $ 4 * 1024 * 1024
+
+dataOffset :: BlockConfig -> Int
+dataOffset BlockConfig {blockSize} =
+    case blockSize of
+        BlockHasSize -> 8
+        _ -> 4
+
+compSizeOffset :: BlockConfig -> Int
+compSizeOffset _ = 0
+
 --------------------------------------------------------------------------------
--- Primitives
+-- Block level compression and decompression
 --------------------------------------------------------------------------------
 
 -- Having NOINLINE here does not effect the performance a lot. Every
@@ -176,10 +197,12 @@ i32ToCInt = coerce
 --
 -- With INLINE statement and the usage of fusion-plugin results in an
 -- enormous code size when used with other combinators.
--- | Primitive function to compress a chunk of Word8.
+--
+-- | Compress an array of Word8. The compressed block header depends on the
+-- 'BlockConfig' setting.
 {-# NOINLINE compressChunk #-}
 compressChunk ::
-       BlockFormat
+       BlockConfig
     -> Int
     -> Ptr C_LZ4Stream
     -> Array.Array Word8
@@ -205,10 +228,6 @@ compressChunk cfg speed ctx arr = do
                 $ error $ "compressChunk: compressed length <= 0."
                     ++ " maxCompLenC: " ++ show maxCompLenC
                     ++ " uncompLenC: " ++ show uncompLenC
-              -- allocate compressed block with 8 byte header.  First 4
-              -- bytes of the header store the length of the uncompressed
-              -- data and the next 4 bytes store the length of the
-              -- compressed data.
               (MArray.Array fptr dstBegin dstMax) <-
                   MArray.newArray (maxCompLen + metaSize_)
               let hdrCompLen = dstBegin `plusPtr` compSizeOffset_
@@ -244,7 +263,7 @@ compressChunk cfg speed ctx arr = do
 -- | Primitive function to decompress a chunk of Word8.
 {-# NOINLINE decompressChunk #-}
 decompressChunk ::
-       BlockFormat
+       BlockConfig
     -> Ptr C_LZ4StreamDecode
     -> Array.Array Word8
     -> IO (Array.Array Word8)
@@ -290,7 +309,7 @@ decompressChunk cfg ctx arr = do
               return $ Array.unsafeFreeze decompArr
 
 --------------------------------------------------------------------------------
--- Compression
+-- Stream compression
 --------------------------------------------------------------------------------
 
 {-# ANN type CompressState Fuse #-}
@@ -306,7 +325,7 @@ data CompressState st ctx prev
 {-# INLINE_NORMAL compressChunksD #-}
 compressChunksD ::
        MonadIO m
-    => BlockFormat
+    => BlockConfig
     -> Int
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
@@ -348,8 +367,21 @@ compressChunksD cfg speed0 (Stream.Stream step0 state0) =
         liftIO $ c_freeStream ctx >> return Stream.Stop
 
 --------------------------------------------------------------------------------
--- Decompression
+-- Stream decompression
 --------------------------------------------------------------------------------
+
+{-# INLINE endMark #-}
+endMark :: Int32
+endMark = 0
+
+footerSize :: FrameConfig -> Int
+footerSize FrameConfig {hasEndMark} =
+    if hasEndMark
+    then 4
+    else 0
+
+validateFooter :: FrameConfig -> Array.Array Word8 -> IO Bool
+validateFooter _ _ = return True
 
 {-# ANN type ResizeState Fuse #-}
 data ResizeState st arr
@@ -360,18 +392,20 @@ data ResizeState st arr
     | RYield arr (ResizeState st arr)
     | RDone
 
--- | This combinators resizes arrays to the required length. Every element of
--- the resulting stream will be a proper compressed element with 8 bytes of meta
--- data prefixed to it.
+-- | Look for a compressed block header and compact the arrays in the input
+-- stream to the compressed length specified in the header. The output contains
+-- arrays, where each array represents a full single compressed block along
+-- with the compression header.
 --
--- This has the property of idempotence,
+-- The resize operation is idempotent:
+--
 -- @resizeChunksD . resizeChunksD = resizeChunksD@
 --
 {-# INLINE_NORMAL resizeChunksD #-}
 resizeChunksD ::
        MonadIO m
-    => BlockFormat
-    -> FrameFormat
+    => BlockConfig
+    -> FrameConfig
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
 resizeChunksD cfg conf (Stream.Stream step0 state0) =
@@ -469,14 +503,14 @@ data DecompressState st ctx prev
 -- | This combinator assumes all the arrays in the incoming stream are properly
 -- resized.
 --
--- This combinator works well with untouched arrays compressed with 'compressChunksD'.
--- A random compressed stream would first need to be resized properly with
--- 'resizeChunksD'.
+-- This combinator works well with untouched arrays compressed with
+-- 'compressChunksD'.  A random compressed stream would first need to be
+-- resized properly with 'resizeChunksD'.
 --
 {-# INLINE_NORMAL decompressChunksRawD #-}
 decompressChunksRawD ::
        MonadIO m
-    => BlockFormat
+    => BlockConfig
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
 decompressChunksRawD cfg (Stream.Stream step0 state0) =
@@ -506,7 +540,7 @@ decompressChunksRawD cfg (Stream.Stream step0 state0) =
 
 decompressChunksWithD ::
        (MonadThrow m, MonadIO m)
-    => Parser.Parser m Word8 (BlockFormat, FrameFormat)
+    => Parser.Parser m Word8 (BlockConfig, FrameConfig)
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
 decompressChunksWithD p s = do
@@ -514,7 +548,7 @@ decompressChunksWithD p s = do
         <$> ArrayStream.fold_ (ArrayFold.fromParser p) (Stream.fromStreamD s)
     decompressChunksRawD cfg (resizeChunksD cfg config next)
 
--- XXX Merge this with BlockFormat?
+-- XXX Merge this with BlockConfig?
 data FLG =
     FLG
         { isBlockIndependent :: Bool
@@ -524,17 +558,18 @@ data FLG =
         , hasDict :: Bool
         }
 
+-- XXX Support Skippable frames
 simpleFrameParserD ::
        (Monad m, MonadThrow m)
-    => Parser.Parser m Word8 (BlockFormat, FrameFormat)
+    => Parser.Parser m Word8 (BlockConfig, FrameConfig)
 simpleFrameParserD = do
     _ <- assertMagic
     _flg <- parseFLG
     blockMaxSize <- parseBD
     _ <- assertHeaderChecksum
     let config =
-            (BlockFormat {blockSize = blockMaxSize}
-            , FrameFormat {hasEndMark = True})
+            (BlockConfig {blockSize = blockMaxSize}
+            , FrameConfig {hasEndMark = True})
     Parser.fromPure config
 
     where
