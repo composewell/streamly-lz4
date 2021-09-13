@@ -16,7 +16,7 @@ build-type:          Simple
 extra-source-files:  CHANGELOG.md
                    , NOTICE
                    , README.md
-                   , c/lz4.h
+                   , cbits/lz4.h
                    , download-corpora.sh
 
 flag fusion-plugin
@@ -43,8 +43,8 @@ common exe-options
 library
   import:              optimization-options
   hs-source-dirs:      src
-  include-dirs:        c
-  c-sources:           c/lz4.c
+  include-dirs:        cbits
+  c-sources:           cbits/lz4.c
   exposed-modules:     Streamly.LZ4
                      , Streamly.Internal.LZ4
                      , Streamly.Internal.LZ4.Config
