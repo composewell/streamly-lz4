@@ -44,7 +44,7 @@ import Data.Bifunctor (second)
 import Data.Bits (Bits(..))
 import Data.Coerce (coerce)
 import Data.Int (Int32)
-import Data.Word (Word8)
+import Data.Word (Word32, Word8, byteSwap32)
 import Foreign.C (CInt(..), CString)
 import Foreign.ForeignPtr (plusForeignPtr, withForeignPtr)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
@@ -72,6 +72,25 @@ import Streamly.Internal.LZ4.Config
 #define INLINE_EARLY  INLINE [2]
 #define INLINE_NORMAL INLINE [1]
 #define INLINE_LATE   INLINE [0]
+
+--------------------------------------------------------------------------------
+-- Endianess
+--------------------------------------------------------------------------------
+
+{-# NOINLINE isLittleEndianMachine #-}
+isLittleEndianMachine :: Bool
+isLittleEndianMachine =
+    let lsb = head $ Array.toList $ Array.asBytes $ Array.fromList [1 :: Word32]
+     in lsb == 1
+
+{-# INLINE toLittleEndian #-}
+toLittleEndian :: Int32 -> Int32
+toLittleEndian i32
+    | isLittleEndianMachine = i32
+    | otherwise = fromIntegral (byteSwap32 (fromIntegral i32))
+
+{-# INLINE fromLittleEndian #-}
+fromLittleEndian = toLittleEndian
 
 --------------------------------------------------------------------------------
 -- Foreign
@@ -163,13 +182,15 @@ metaSize BlockConfig {blockSize} =
 setUncompSize :: BlockConfig -> Ptr Word8 -> Int32 -> IO ()
 setUncompSize BlockConfig {blockSize} =
     case blockSize of
-        BlockHasSize -> \src -> poke (castPtr src `plusPtr` 4)
+        BlockHasSize -> \src -> poke (castPtr src `plusPtr` 4) . toLittleEndian
         _ -> \_ _ -> return ()
 
 getUncompSize :: BlockConfig -> Ptr Word8 -> IO Int32
 getUncompSize BlockConfig {blockSize} =
     case blockSize of
-        BlockHasSize -> \src -> peek (castPtr src `plusPtr` 4 :: Ptr Int32)
+        BlockHasSize ->
+            \src ->
+                fromLittleEndian <$> peek (castPtr src `plusPtr` 4 :: Ptr Int32)
         BlockMax64KB -> \_ -> return $ 64 * 1024
         BlockMax256KB -> \_ -> return $ 256 * 1024
         BlockMax1MB -> \_ -> return $ 1024 * 1024
@@ -240,7 +261,7 @@ compressChunk cfg speed ctx arr = do
                     ++ "uncompLenC: " ++ show uncompLenC
                     ++ "compLenC: " ++ show compLenC
               setUncompSize_ dstBegin (cIntToI32 uncompLenC)
-              poke hdrCompLen (cIntToI32 compLenC)
+              poke hdrCompLen (toLittleEndian (cIntToI32 compLenC))
               let compLen = cIntToInt compLenC
                   dstEnd = dstBegin `plusPtr` (compLen + metaSize_)
                   compArr = MArray.Array fptr dstEnd dstMax
@@ -274,7 +295,7 @@ decompressChunk cfg ctx arr = do
                   compData = src `plusPtr` dataOffset cfg
                   arrDataLen = Array.byteLength arr - metaSize cfg
               uncompLenC <- i32ToCInt <$> getUncompSize cfg src
-              compLenC <- i32ToCInt <$> peek hdrCompLen
+              compLenC <- i32ToCInt . fromLittleEndian <$> peek hdrCompLen
               let compLen = cIntToInt compLenC
                   maxCompLenC = lz4_MAX_OUTPUT_SIZE
                   uncompLen = cIntToInt uncompLenC
@@ -442,7 +463,8 @@ resizeChunksD cfg conf (Stream.Stream step0 state0) =
                    then return $ Stream.Skip $ RAccumulate st arr
                    else do
                        let compLenPtr = castPtr (b `plusPtr` compSizeOffset_)
-                       compressedSize <- i32ToInt <$> peek compLenPtr
+                       compressedSize <-
+                           i32ToInt . fromLittleEndian <$> peek compLenPtr
                        let required = compressedSize + metaSize_
                        if len == required
                        then return $ Stream.Skip $ RYield arr $ RInit st
