@@ -232,15 +232,12 @@ compressChunk cfg speed ctx arr = do
     Array.unsafeAsPtr arr
         $ \src -> do
               let uncompLen = Array.byteLength arr
-                  maxUncompLen = cIntToInt lz4_MAX_INPUT_SIZE
                   speedC = unsafeIntToCInt speed
-              -- Ideally the maxCLen check below covers this case, but just in
-              -- case.
-              when (uncompLen > maxUncompLen)
+              when (uncompLen > maxBlockSize)
                 $ error $ "compressChunk: Source array length "
                     ++ show uncompLen
-                    ++ " exceeds the max LZ4 limit "
-                    ++ show maxUncompLen
+                    ++ " exceeds the maximum block size of "
+                    ++ show maxBlockSize
               -- The size is safe to downcast
               let uncompLenC = unsafeIntToCInt uncompLen
               maxCompLenC <- c_compressBound uncompLenC
@@ -274,6 +271,13 @@ compressChunk cfg speed ctx arr = do
     compSizeOffset_ = compSizeOffset cfg
     dataOffset_ = dataOffset cfg
     setUncompSize_ = setUncompSize cfg
+    maxBlockSize =
+        case blockSize cfg of
+             BlockHasSize -> cIntToInt lz4_MAX_INPUT_SIZE
+             BlockMax64KB -> 64 * 1024
+             BlockMax256KB -> 256 * 1024
+             BlockMax1MB -> 1024 * 1024
+             BlockMax4MB -> 4 * 1024 * 1024
 
 -- Having NOINLINE here does not effect the performance a lot. Every
 -- iteration of the loop is a little slower (< 1us) but the entire loop
