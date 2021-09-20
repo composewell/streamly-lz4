@@ -1,5 +1,5 @@
 packages:
 - '.'
-resolver: lts-16.11
+resolver: lts-18.10
 extra-deps:
 - streamly-0.8.0
