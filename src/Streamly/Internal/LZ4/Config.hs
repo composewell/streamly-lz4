@@ -115,7 +115,8 @@ data BlockSize =
     | BlockMax1MB
     | BlockMax4MB
 
--- | Defines the LZ4 compressed block format.
+-- | Defines the LZ4 compressed block format. Please note that the
+-- @Uncompressed length@ field is optional and not in the LZ4 specification.
 --
 -- @
 --  ----------------------------------------------------------------------
@@ -125,10 +126,9 @@ data BlockSize =
 -- @
 --
 -- Compressed length is the length of the @Data@ field only.  Uncompressed
--- length is present only when the 'setBlockMaxSize' is set to 'BlockHasSize'
--- this is the length of the block when it is uncompressed. Checksum is present
--- when 'setBlockChecksum' is set to 'True'. The 4-byte fields are stored in
--- machine byte order.
+-- length is present only when the 'setBlockMaxSize' is set to 'BlockHasSize'.
+-- Checksum is present when 'setBlockChecksum' is set to 'True'. The 4-byte
+-- fields are stored in machine byte order.
 --
 newtype BlockConfig =
     BlockConfig

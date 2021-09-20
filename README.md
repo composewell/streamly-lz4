@@ -1,42 +1,26 @@
 # streamly-lz4
 
-This library uses <https://github.com/lz4/lz4.git> to implement streamly
-combinators that perform lz4 compression.
-
-This library is inspired by <https://github.com/bigmac2k/lz4-conduit>
-
-To read more about LZ4 go to <https://github.com/lz4/lz4>
-
-## Known Limitations
-
-### Endianness
-
-The library does not specifically consider the endianness while serializing and
-deserializing. If the data is compressed on a little-endian machine, it cannot
-be decompressed on a big-endian machine and vice-versa.
-
-### Build on Windows using stack
-
-Currently, the library fails to build on windows using stack due to some
-limitations of stack itself.
+This library uses the LZ4 compression algorithm
+<https://github.com/lz4/lz4> to compress and decompress a data stream
+using [Haskell Streamly](https://streamly.composewell.com/).
 
 ## Running benchmarks
 
-Benchmarks use corpora provided by the canterbury corpus
-<https://corpus.canterbury.ac.nz/>
+`download-corpora.sh` downloads and unpacks the [caterbury
+corpus](https://corpus.canterbury.ac.nz/) used for benchmarking.
 
-`download-corpora.sh` automatically downloads and unpacks all the required
-benchmarks.
-
-You need to run it from the top level directory like so,
+Run the following commands from the top level directory in the repo:
 ```
 $ ./download-corpora.sh
 $ cabal run bench-lz4 -- --quick
-$ cabal run --flag fusion-plugin bench-lz4 -- --quick
 ```
 
-You can use `--flag fusion-plugin` to build benchmarks with the
-[fusion-plugin](https://github.com/composewell/fusion-plugin).
+To use [fusion-plugin](https://github.com/composewell/fusion-plugin) for
+benchmarks:
+
+```
+$ cabal run --flag fusion-plugin bench-lz4 -- --quick
+```
 
 ### Benchmarking an external corpus
 
@@ -60,7 +44,7 @@ $ export BENCH_STREAMLY_LZ4_STRATEGY="c+400+640000"
 $ cabal bench
 ```
 
-The commands above will run the compression bench suite on **path/to/file/** with
+The commands above runs the compression bench suite on **path/to/file/** with
 the acceleration value of **500** read as arrays of size **640000** bytes.
 
 *Note*: For the decompression and resizing bench suite a compressed file is
