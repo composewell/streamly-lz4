@@ -1,3 +1,11 @@
+-- |
+-- Module      : Streamly.Internal.LZ4.Config
+-- Copyright   : (c) 2020 Composewell Technologies
+-- License     : Apache-2.0
+-- Maintainer  : streamly@composewell.com
+-- Stability   : experimental
+-- Portability : GHC
+--
 module Main (main) where
 
 import Control.Monad (forM_)
