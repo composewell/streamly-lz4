@@ -90,6 +90,7 @@ toLittleEndian i32
     | otherwise = fromIntegral (byteSwap32 (fromIntegral i32))
 
 {-# INLINE fromLittleEndian #-}
+fromLittleEndian :: Int32 -> Int32
 fromLittleEndian = toLittleEndian
 
 --------------------------------------------------------------------------------
