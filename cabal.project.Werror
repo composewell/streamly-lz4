@@ -1,0 +1,4 @@
+packages: .
+
+package streamly-lz4
+  ghc-options: -Werror
