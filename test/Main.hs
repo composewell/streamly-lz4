@@ -1,5 +1,5 @@
 -- |
--- Module      : Streamly.Internal.LZ4.Config
+-- Module      : Main
 -- Copyright   : (c) 2020 Composewell Technologies
 -- License     : Apache-2.0
 -- Maintainer  : streamly@composewell.com
