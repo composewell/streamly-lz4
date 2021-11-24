@@ -80,6 +80,7 @@ jobs:
             cabal_project: cabal.project.Werror
 
           - name: Hlint
+            ghc_version: 8.8.4
             pack_options: HLINT_OPTIONS="lint" HLINT_TARGETS="src"
             runner: ubuntu-latest
 
@@ -90,7 +91,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
-    - uses: actions/setup-haskell@v1
+    - uses: haskell/actions/setup@v1
       with:
         ghc-version: ${{ matrix.ghc_version }}
         cabal-version: ${{ matrix.cabal_version }}
