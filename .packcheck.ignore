@@ -5,3 +5,4 @@ appveyor.yml
 .gitignore
 cabal.project.Werror
 default.nix
+cabal.project
