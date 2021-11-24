@@ -55,8 +55,8 @@ where
 import Control.Monad.IO.Class (MonadIO)
 import Data.Word (Word8)
 import Streamly.Internal.Data.Array.Foreign (Array)
-import Streamly.Internal.Data.Stream.StreamD (fromStreamD, toStreamD)
 import Streamly.Prelude (SerialT)
+import Streamly.Internal.Data.Stream.IsStream.Type (fromStreamD, toStreamD)
 
 import Streamly.Internal.LZ4.Config
 import Streamly.Internal.LZ4

@@ -46,7 +46,6 @@ import Data.Coerce (coerce)
 import Data.Int (Int32)
 import Data.Word (Word32, Word8, byteSwap32)
 import Foreign.C (CInt(..), CString)
-import Foreign.ForeignPtr (plusForeignPtr, withForeignPtr)
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peek, poke)
 import Fusion.Plugin.Types (Fuse (..))
@@ -58,6 +57,7 @@ import qualified Streamly.Internal.Data.Array.Foreign.Mut.Type as MArray
 import qualified Streamly.Internal.Data.Parser.ParserD as Parser
 import qualified Streamly.Internal.Data.Fold as Fold
 import qualified Streamly.Internal.Data.Stream.StreamD as Stream
+import qualified Streamly.Internal.Data.Stream.IsStream as IsStream
 import qualified Streamly.Internal.Data.Array.Stream.Foreign as ArrayStream
 import qualified Streamly.Internal.Data.Array.Stream.Fold.Foreign as ArrayFold
 
@@ -247,7 +247,7 @@ compressChunk cfg speed ctx arr = do
                 $ error $ "compressChunk: compressed length <= 0."
                     ++ " maxCompLenC: " ++ show maxCompLenC
                     ++ " uncompLenC: " ++ show uncompLenC
-              (MArray.Array fptr dstBegin dstMax) <-
+              (MArray.Array cont dstBegin_ dstBegin dstMax) <-
                   MArray.newArray (maxCompLen + metaSize_)
               let hdrCompLen = dstBegin `plusPtr` compSizeOffset_
                   compData = dstBegin `plusPtr` dataOffset_
@@ -262,10 +262,10 @@ compressChunk cfg speed ctx arr = do
               poke hdrCompLen (toLittleEndian (cIntToI32 compLenC))
               let compLen = cIntToInt compLenC
                   dstEnd = dstBegin `plusPtr` (compLen + metaSize_)
-                  compArr = MArray.Array fptr dstEnd dstMax
+                  compArr = MArray.Array cont dstBegin_ dstEnd dstMax
               -- It is safe to shrink here as we need to hold the last 64KB of
               -- the previous uncompressed array and not the compressed one.
-              Array.unsafeFreeze <$> MArray.shrinkToFit compArr
+              Array.unsafeFreeze <$> MArray.rightSize compArr
     where
 
     metaSize_ = metaSize cfg
@@ -317,7 +317,8 @@ decompressChunk cfg ctx arr = do
                   error $ "decompressChunk: compressed data length is more "
                     ++ "than the max limit: " ++ show maxCompLenC
 
-              (MArray.Array fptr dstBegin dstMax) <- MArray.newArray uncompLen
+              (MArray.Array cont dstBegin_ dstBegin dstMax)
+                  <- MArray.newArray uncompLen
               decompLenC <-
                   c_decompressSafeContinue
                         ctx compData dstBegin compLenC uncompLenC
@@ -329,7 +330,7 @@ decompressChunk cfg ctx arr = do
                     ++ "\ndecompLenC = " ++ show decompLenC
               let decompLen = cIntToInt decompLenC
                   dstEnd = dstBegin `plusPtr` decompLen
-                  decompArr = MArray.Array fptr dstEnd dstMax
+                  decompArr = MArray.Array cont dstBegin_ dstEnd dstMax
               -- We cannot shrink the array here, because that would reallocate
               -- the array invalidating the cached dictionary.
               return $ Array.unsafeFreeze decompArr
@@ -455,11 +456,11 @@ resizeChunksD cfg conf (Stream.Stream step0 state0) =
         | otherwise = return False
 
     {-# INLINE process #-}
-    process st arr@(Array.Array fb e) = do
+    process st arr@(Array.Array cont b e) = do
         let len = Array.byteLength arr
         if len < 4
         then return $ Stream.Skip $ RAccumulate st arr
-        else withForeignPtr fb $ \b -> do
+        else do
                res <- isEndMark b
                if res
                then return $ Stream.Skip $ RFooter st arr
@@ -477,9 +478,9 @@ resizeChunksD cfg conf (Stream.Stream step0 state0) =
                        then return $ Stream.Skip $ RAccumulate st arr
                        else do
                            let arr1E = b `plusPtr` required
-                               arr1 = Array.Array fb arr1E
-                               arr2S = fb `plusForeignPtr` required
-                               arr2 = Array.Array arr2S e
+                               arr1 = Array.Array cont b arr1E
+                               arr2 = Array.Array cont arr1E e
+                           MArray.touch cont
                            return $ Stream.Skip $ RYield arr1 $ RProcess st arr2
 
     {-# INLINE_LATE step #-}
@@ -498,7 +499,7 @@ resizeChunksD cfg conf (Stream.Stream step0 state0) =
         r <- step0 gst st
         case r of
             Stream.Yield arr st1 -> do
-                arr1 <- Array.spliceTwo buf arr
+                arr1 <- Array.splice buf arr
                 liftIO $ process st1 arr1
             Stream.Skip st1 -> return $ Stream.Skip $ RAccumulate st1 buf
             Stream.Stop -> error "resizeChunksD: Incomplete block"
@@ -510,7 +511,7 @@ resizeChunksD cfg conf (Stream.Stream step0 state0) =
             r <- step0 gst st
             case r of
                 Stream.Yield arr st1 -> do
-                    arr1 <- Array.spliceTwo buf arr
+                    arr1 <- Array.splice buf arr
                     return $ Stream.Skip $ RFooter st1 arr1
                 Stream.Skip st1 -> return $ Stream.Skip $ RFooter st1 buf
                 Stream.Stop -> error "resizeChunksD: Incomplete footer"
@@ -571,8 +572,8 @@ decompressChunksWithD ::
     -> Stream.Stream m (Array.Array Word8)
     -> Stream.Stream m (Array.Array Word8)
 decompressChunksWithD p s = do
-    ((cfg, config), next) <- Stream.fromEffect $ second Stream.toStreamD
-        <$> ArrayStream.fold_ (ArrayFold.fromParser p) (Stream.fromStreamD s)
+    ((cfg, config), next) <- Stream.fromEffect $ second IsStream.toStreamD
+        <$> ArrayStream.foldArr_ (ArrayFold.fromParser p) (IsStream.fromStreamD s)
     decompressChunksRawD cfg (resizeChunksD cfg config next)
 
 -- XXX Merge this with BlockConfig?
