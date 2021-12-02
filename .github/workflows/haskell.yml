@@ -49,6 +49,7 @@ jobs:
           - 8.10.7+fusion-plugin
           - 9.0.1+werror
           - 8.10.7+macos
+          - 9.2.1
           - hlint
 
         include:
@@ -95,6 +96,12 @@ jobs:
             ghc_version: 8.10.7
             runner: macos-latest
             cabal_version: 3.2
+
+          - name: 9.2.1
+            ghc_version: 9.2.1
+            runner: ubuntu-latest
+            cabal_version: 3.6
+            pack_options: DISABLE_BENCH=y
 
     steps:
     - uses: actions/checkout@v2
