@@ -42,52 +42,59 @@ jobs:
       fail-fast: false
       matrix:
         name:
-          [ Ubuntu+GHC822
-          , Ubuntu+GHC844
-          , Ubuntu+GHC865
-          , Ubuntu+GHC884
-          , Ubuntu+GHC8107+fusion-plugin
-          , Ubuntu+GHC901+Werror
-          , MacOS+GHC8107
-          , Hlint
-          ]
-        cabal_version: [3.2]
+          - 8.2.2
+          - 8.4.4
+          - 8.6.5
+          - 8.8.4
+          - 8.10.7+fusion-plugin
+          - 9.0.1+werror
+          - 8.10.7+macos
+          - hlint
+
         include:
 
-          - name: Ubuntu+GHC822
+          - name: 8.2.2
             ghc_version: 8.2.2
             runner: ubuntu-latest
+            cabal_version: 3.2
 
-          - name: Ubuntu+GHC844
+          - name: 8.4.4
             ghc_version: 8.4.4
             runner: ubuntu-latest
+            cabal_version: 3.2
 
-          - name: Ubuntu+GHC865
+          - name: 8.6.5
             ghc_version: 8.6.5
             runner: ubuntu-latest
+            cabal_version: 3.2
 
-          - name: Ubuntu+GHC884
+          - name: 8.8.4
             ghc_version: 8.8.4
             runner: ubuntu-latest
+            cabal_version: 3.2
 
-          - name: Ubuntu+GHC8107+fusion-plugin
+          - name: 8.10.7+fusion-plugin
             ghc_version: 8.10.7
             pack_options: CABAL_BUILD_OPTIONS="-f fusion-plugin"
             runner: ubuntu-latest
+            cabal_version: 3.2
 
-          - name: Ubuntu+GHC901+Werror
+          - name: 9.0.1+werror
             ghc_version: 9.0.1
             runner: ubuntu-latest
             cabal_project: cabal.project.Werror
+            cabal_version: 3.2
 
-          - name: Hlint
+          - name: hlint
             ghc_version: 8.8.4
             pack_options: HLINT_OPTIONS="lint" HLINT_TARGETS="src"
             runner: ubuntu-latest
+            cabal_version: 3.2
 
-          - name: MacOS+GHC8107
+          - name: 8.10.7+macos
             ghc_version: 8.10.7
             runner: macos-latest
+            cabal_version: 3.2
 
     steps:
     - uses: actions/checkout@v2
