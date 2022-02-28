@@ -230,7 +230,7 @@ compressChunk ::
     -> Array.Array Word8
     -> IO (Array.Array Word8)
 compressChunk cfg speed ctx arr = do
-    Array.unsafeAsPtr arr
+    Array.asPtrUnsafe (Array.unsafeCast arr)
         $ \src -> do
               let uncompLen = Array.byteLength arr
                   speedC = unsafeIntToCInt speed
@@ -294,7 +294,7 @@ decompressChunk ::
     -> Array.Array Word8
     -> IO (Array.Array Word8)
 decompressChunk cfg ctx arr = do
-    Array.unsafeAsPtr arr
+    Array.asPtrUnsafe (Array.unsafeCast arr)
         $ \src -> do
               let hdrCompLen :: Ptr Int32 = src `plusPtr` compSizeOffset cfg
                   compData = src `plusPtr` dataOffset cfg
@@ -573,7 +573,7 @@ decompressChunksWithD ::
     -> Stream.Stream m (Array.Array Word8)
 decompressChunksWithD p s = do
     ((cfg, config), next) <- Stream.fromEffect $ second IsStream.toStreamD
-        <$> ArrayStream.foldArr_ (ArrayFold.fromParser p) (IsStream.fromStreamD s)
+        <$> ArrayStream.foldArr_ (ArrayFold.fromParserD p) (IsStream.fromStreamD s)
     decompressChunksRawD cfg (resizeChunksD cfg config next)
 
 -- XXX Merge this with BlockConfig?

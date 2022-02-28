@@ -32,7 +32,7 @@
 -- Please build with
 -- [fusion-plugin](https://hackage.haskell.org/package/fusion-plugin) for best
 -- performance. See the [streamly build
--- guide](https://streamly.composewell.com/streamly-0.8.0/Compiling.html) for
+-- guide](https://streamly.composewell.com/streamly-0.8.2/Compiling.html) for
 -- more details.
 --
 -- The APIs are not yet stable and may change in future.
