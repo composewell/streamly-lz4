@@ -9,17 +9,19 @@
 module Main (main) where
 
 import Control.Monad (unless)
+import Data.Function ((&))
 import Data.Semigroup (cycle1)
 import Data.Word (Word8)
-import Data.Function ((&))
-import Streamly.Internal.Data.Array.Foreign (Array)
-import Streamly.Internal.Data.Stream.IsStream.Type (fromStreamD, toStreamD)
-import Streamly.Prelude (SerialT)
+import Streamly.Data.Array.Unboxed (Array)
+import Streamly.Data.Stream (Stream)
+import Streamly.Internal.Data.Stream.Type (fromStreamD, toStreamD)
 import System.Directory (getCurrentDirectory, doesFileExist)
 import System.Environment (lookupEnv)
 
-import qualified Streamly.Internal.Data.Stream.IsStream as Stream
-import qualified Streamly.Internal.Data.Array.Foreign as Array
+import qualified Streamly.Data.Array.Unboxed as Array
+import qualified Streamly.Data.Fold as Fold
+import qualified Streamly.Data.Stream as Stream
+import qualified Streamly.Internal.Data.Stream as Stream (parseD)
 import qualified Streamly.Internal.FileSystem.File as File
 import qualified Streamly.Internal.LZ4 as LZ4
 import qualified Streamly.Internal.LZ4.Config as LZ4
@@ -78,7 +80,7 @@ bootstrap fp = do
         putStrLn $ "Normalizing " ++ fp
         let fileStream = Stream.unfold File.read fp
             combinedStream =
-                Stream.arraysOf _64KB
+                Stream.foldMany (Array.writeN _64KB)
                     $ Stream.take _10MB
                     $ cycle1 fileStream
         combinedStream & File.fromChunks normalizedFp
@@ -112,8 +114,8 @@ bootstrap fp = do
         :: LZ4.BlockConfig
         -> LZ4.FrameConfig
         -> Int
-        -> Stream.SerialT IO (Array.Array Word8)
-        -> Stream.SerialT IO (Array.Array Word8)
+        -> Stream IO (Array.Array Word8)
+        -> Stream IO (Array.Array Word8)
     compressChunksFrame bf ff i_ strm =
         if LZ4.hasEndMark ff
         then (fromStreamD . LZ4.compressChunksD bf i_ . toStreamD) strm
@@ -125,16 +127,16 @@ bootstrap fp = do
 -- Benchmark helpers
 --------------------------------------------------------------------------------
 
-type Combinator = SerialT IO (Array Word8) -> SerialT IO (Array Word8)
+type Combinator = Stream IO (Array Word8) -> Stream IO (Array Word8)
 
 {-# INLINE benchCorpus #-}
 benchCorpus :: Int -> String -> String -> Combinator -> Benchmark
 benchCorpus bufsize name corpus combinator =
     let bname = ("bufsize(" ++ show bufsize ++ ")/" ++ name ++ "/" ++ corpus)
      in bench bname $ nfIO $ do
-            Stream.unfold File.readChunksWithBufferOf (bufsize, corpus)
+            Stream.unfold File.readChunksWith (bufsize, corpus)
                 & combinator
-                & Stream.drain
+                & Stream.fold Fold.drain
 
 --------------------------------------------------------------------------------
 -- Benchmarks
