@@ -1,7 +1,4 @@
-packages: streamly-lz4.cabal
-
-package streamly-lz4
-  ghc-options: -Werror
+packages: .
 
 source-repository-package
    type: git
@@ -13,3 +10,5 @@ source-repository-package
   location: https://github.com/composewell/streamly.git
   tag: master
   subdir: core
+
+jobs: 1
