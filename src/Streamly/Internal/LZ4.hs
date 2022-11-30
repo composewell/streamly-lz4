@@ -40,7 +40,6 @@ where
 import Control.Monad (when)
 import Control.Monad.Catch (MonadThrow)
 import Control.Monad.IO.Class (MonadIO(..))
-import Data.Bifunctor (second)
 import Data.Bits (Bits(..))
 import Data.Coerce (coerce)
 import Data.Int (Int32)
@@ -51,27 +50,26 @@ import Foreign.Storable (peek, poke)
 import Fusion.Plugin.Types (Fuse (..))
 import System.IO.Unsafe (unsafePerformIO)
 
-import qualified Streamly.Data.Array.Unboxed as Array
-import qualified Streamly.Data.Array.Unboxed.Mut as MArray
+import qualified Streamly.Data.Array as Array
+import qualified Streamly.Data.Array.Mut as MArray
 import qualified Streamly.Data.Fold as Fold
-import qualified Streamly.Data.Unbox as Unbox
-import qualified Streamly.Internal.Data.Array.Stream.Fold.Foreign as ArrayFold
+import qualified Streamly.Internal.Data.Unboxed as Unbox
+import qualified Streamly.Internal.Data.Fold.Chunked as ArrayFold
     ( fromParserD )
-import qualified Streamly.Internal.Data.Array.Stream.Foreign as ArrayStream
+import qualified Streamly.Internal.Data.Stream.Chunked as ArrayStream
     ( runArrayFoldBreak )
-import qualified Streamly.Internal.Data.Array.Unboxed as Array
+import qualified Streamly.Internal.Data.Array as Array
     ( asPtrUnsafe, castUnsafe, unsafeFreeze )
-import qualified Streamly.Internal.Data.Array.Unboxed.Mut.Type as MArray
+import qualified Streamly.Internal.Data.Array.Mut.Type as MArray
     ( Array(..), asPtrUnsafe, rightSize, touch )
-import qualified Streamly.Internal.Data.Array.Unboxed.Type as Array
+import qualified Streamly.Internal.Data.Array.Type as Array
     ( Array(..), byteLength, splice )
 import qualified Streamly.Internal.Data.Parser.ParserD as Parser
     ( Parser, die, fromPure, satisfy, takeEQ )
 import qualified Streamly.Internal.Data.Stream as Stream
-    ( fromStreamD, toStreamD )
+    ( concatMapM, fromPure, fromStreamD, toStreamD )
 import qualified Streamly.Internal.Data.Stream.StreamD as StreamD
-    ( Step(..), Stream(..), fromEffect )
-import qualified Streamly.Internal.Data.Unboxed as Unbox (castContents)
+    ( Step(..), Stream(..))
 
 import Streamly.Internal.LZ4.Config
 
@@ -260,7 +258,7 @@ compressChunk cfg speed ctx arr = do
                     ++ " maxCompLenC: " ++ show maxCompLenC
                     ++ " uncompLenC: " ++ show uncompLenC
               newarr@(MArray.Array cont arrStart arrEnd arrBound) <-
-                  MArray.newArray (maxCompLen + metaSize_)
+                  MArray.new (maxCompLen + metaSize_)
               dstBegin_ <- MArray.asPtrUnsafe newarr return
               let dstBegin = dstBegin_ `plusPtr` arrEnd
               let hdrCompLen = dstBegin `plusPtr` compSizeOffset_
@@ -332,7 +330,7 @@ decompressChunk cfg ctx arr = do
                     ++ "than the max limit: " ++ show maxCompLenC
 
               newarr@(MArray.Array cont arrStart arrEnd arrBound)
-                  <- MArray.newArray uncompLen
+                  <- MArray.new uncompLen
               dstBegin_ <- MArray.asPtrUnsafe newarr return
               let dstBegin = dstBegin_ `plusPtr` arrEnd
               decompLenC <-
@@ -467,7 +465,7 @@ resizeChunksD cfg conf (StreamD.Stream step0 state0) =
     {-# INLINE isEndMark #-}
     isEndMark arrContents i
         | hasEndMark_ = do
-              em <- Unbox.box arrContents i
+              em <- Unbox.peekWith arrContents i
               return $ em == endMark
         | otherwise = return False
 
@@ -487,7 +485,7 @@ resizeChunksD cfg conf (StreamD.Stream step0 state0) =
                        let compLenPtr = b + compSizeOffset_
                        compressedSize <-
                            i32ToInt . fromLittleEndian <$>
-                                    Unbox.box
+                                    Unbox.peekWith
                                            (Unbox.castContents cont)
                                            compLenPtr
                        let required = compressedSize + metaSize_
@@ -587,13 +585,18 @@ decompressChunksRawD cfg (StreamD.Stream step0 state0) =
 
 decompressChunksWithD ::
        (MonadThrow m, MonadIO m)
-    => Parser.Parser m Word8 (BlockConfig, FrameConfig)
+    => Parser.Parser Word8 m (BlockConfig, FrameConfig)
     -> StreamD.Stream m (Array.Array Word8)
     -> StreamD.Stream m (Array.Array Word8)
-decompressChunksWithD p s = do
-    ((cfg, config), next) <- StreamD.fromEffect $ second Stream.toStreamD
-        <$> ArrayStream.runArrayFoldBreak (ArrayFold.fromParserD p) (Stream.fromStreamD s)
-    decompressChunksRawD cfg (resizeChunksD cfg config next)
+decompressChunksWithD p s =
+    Stream.toStreamD $
+    Stream.concatMapM (\() -> generator) (Stream.fromPure ())
+
+    where
+
+    generator = do
+        ((cfg, config), next) <- ArrayStream.runArrayFoldBreak (ArrayFold.fromParserD p) (Stream.fromStreamD s)
+        return $ Stream.fromStreamD $ decompressChunksRawD cfg (resizeChunksD cfg config (Stream.toStreamD next))
 
 -- XXX Merge this with BlockConfig?
 data FLG =
@@ -608,7 +611,7 @@ data FLG =
 -- XXX Support Skippable frames
 simpleFrameParserD ::
        (Monad m, MonadThrow m)
-    => Parser.Parser m Word8 (BlockConfig, FrameConfig)
+    => Parser.Parser Word8 m (BlockConfig, FrameConfig)
 simpleFrameParserD = do
     _ <- assertMagic
     _flg <- parseFLG
