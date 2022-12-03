@@ -21,11 +21,11 @@ import Test.QuickCheck.Gen
     ( Gen, choose, elements, frequency, generate, listOf, vectorOf )
 import Test.QuickCheck.Monadic (monadicIO)
 
-import qualified Streamly.Data.Array.Unboxed as Array
+import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Data.Stream as Stream
 import qualified Streamly.FileSystem.Handle as Handle
-import qualified Streamly.Internal.Data.Stream as Stream (bracket_, parseD)
+import qualified Streamly.Internal.Data.Stream as Stream (parseD)
 import qualified Streamly.Internal.FileSystem.Handle as Handle (putChunks)
 
 import Streamly.Internal.LZ4.Config
@@ -99,9 +99,9 @@ decompressCompress conf bufsize i lst = do
         hClose tmpH
         lst1 <-
             Stream.fold Fold.toList
-                $ Stream.bracket_ (openFile tmp ReadMode) hClose
+                $ Stream.bracketIO (openFile tmp ReadMode) hClose
                 $ \h ->
-                      Stream.unfold Handle.readChunksWith (bufsize, h)
+                      Stream.unfold Handle.chunkReaderWith (bufsize, h)
                           & decompressChunks conf
         lst1 `shouldBe` lst
 
@@ -118,9 +118,9 @@ decompressCompressFrame bf ff bufsize i lst = do
         hClose tmpH
         lst1 <-
             Stream.fold Fold.toList
-                $ Stream.bracket_ (openFile tmp ReadMode) hClose
+                $ Stream.bracketIO (openFile tmp ReadMode) hClose
                 $ \h ->
-                      Stream.unfold Handle.readChunksWith (bufsize, h)
+                      Stream.unfold Handle.chunkReaderWith (bufsize, h)
                           & decompressChunksFrame
         lst1 `shouldBe` lst
 
@@ -154,20 +154,23 @@ decompressWithCompress bufsize i lst = do
         headerList = magicLE ++ [flg, bd, headerChk]
         header = Stream.fromList headerList
     headerArr <- Stream.fold (Array.writeN (length headerList)) header
-    (bf, ff) <- Stream.parseD simpleFrameParserD header
+    x0 <- Stream.parseD simpleFrameParserD header
     let strm = Stream.fromList lst
-    withSystemTempFile "LZ4" $ \tmp tmpH -> do
-        compressChunksFrame bf ff i strm
-            & Stream.cons headerArr
-            & Handle.putChunks tmpH
-        hClose tmpH
-        lst1 <-
-            Stream.fold Fold.toList
-                $ Stream.bracket_ (openFile tmp ReadMode) hClose
-                $ \h ->
-                      Stream.unfold Handle.readChunksWith (bufsize, h)
-                          & decompressWith_
-        lst1 `shouldBe` lst
+    case x0 of
+        Right (bf, ff) ->
+            withSystemTempFile "LZ4" $ \tmp tmpH -> do
+                compressChunksFrame bf ff i strm
+                    & Stream.cons headerArr
+                    & Handle.putChunks tmpH
+                hClose tmpH
+                lst1 <-
+                    Stream.fold Fold.toList
+                        $ Stream.bracketIO (openFile tmp ReadMode) hClose
+                        $ \h ->
+                            Stream.unfold Handle.chunkReaderWith (bufsize, h)
+                                & decompressWith_
+                lst1 `shouldBe` lst
+        Left _ -> return ()
 
     where
 

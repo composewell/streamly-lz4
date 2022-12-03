@@ -12,13 +12,13 @@ import Control.Monad (unless)
 import Data.Function ((&))
 import Data.Semigroup (cycle1)
 import Data.Word (Word8)
-import Streamly.Data.Array.Unboxed (Array)
+import Streamly.Data.Array (Array)
 import Streamly.Data.Stream (Stream)
 import Streamly.Internal.Data.Stream.Type (fromStreamD, toStreamD)
 import System.Directory (getCurrentDirectory, doesFileExist)
 import System.Environment (lookupEnv)
 
-import qualified Streamly.Data.Array.Unboxed as Array
+import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Data.Stream as Stream
 import qualified Streamly.Internal.Data.Stream as Stream (parseD)
@@ -78,7 +78,7 @@ bootstrap fp = do
     fileExists <- doesFileExist normalizedFp
     unless fileExists $ do
         putStrLn $ "Normalizing " ++ fp
-        let fileStream = Stream.unfold File.read fp
+        let fileStream = Stream.unfold File.reader fp
             combinedStream =
                 Stream.foldMany (Array.writeN _64KB)
                     $ Stream.take _10MB
@@ -99,10 +99,13 @@ bootstrap fp = do
             headerList = magicLE ++ [flg, bd, headerChk]
             header = Stream.fromList headerList
         headerArr <- Stream.fold (Array.writeN (length headerList)) header
-        (bf, ff) <- Stream.parseD LZ4.simpleFrameParserD header
-        combinedStream & compressChunksFrame bf ff 65537
-                       & Stream.cons headerArr
-                       & File.fromChunks compressedWith
+        x0 <- Stream.parseD LZ4.simpleFrameParserD header
+        case x0 of
+            Right (bf, ff) ->
+                combinedStream & compressChunksFrame bf ff 65537
+                            & Stream.cons headerArr
+                            & File.fromChunks compressedWith
+            Left _ -> return ()
 
     where
 
@@ -134,7 +137,7 @@ benchCorpus :: Int -> String -> String -> Combinator -> Benchmark
 benchCorpus bufsize name corpus combinator =
     let bname = ("bufsize(" ++ show bufsize ++ ")/" ++ name ++ "/" ++ corpus)
      in bench bname $ nfIO $ do
-            Stream.unfold File.readChunksWith (bufsize, corpus)
+            Stream.unfold File.chunkReaderWith (bufsize, corpus)
                 & combinator
                 & Stream.fold Fold.drain
 
