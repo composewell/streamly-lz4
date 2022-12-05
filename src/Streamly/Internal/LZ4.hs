@@ -258,7 +258,7 @@ compressChunk cfg speed ctx arr = do
                     ++ " maxCompLenC: " ++ show maxCompLenC
                     ++ " uncompLenC: " ++ show uncompLenC
               newarr@(MArray.Array cont arrStart arrEnd arrBound) <-
-                  MArray.new (maxCompLen + metaSize_)
+                  MArray.newPinned (maxCompLen + metaSize_)
               dstBegin_ <- MArray.asPtrUnsafe newarr return
               let dstBegin = dstBegin_ `plusPtr` arrEnd
               let hdrCompLen = dstBegin `plusPtr` compSizeOffset_
@@ -330,7 +330,7 @@ decompressChunk cfg ctx arr = do
                     ++ "than the max limit: " ++ show maxCompLenC
 
               newarr@(MArray.Array cont arrStart arrEnd arrBound)
-                  <- MArray.new uncompLen
+                  <- MArray.newPinned uncompLen
               dstBegin_ <- MArray.asPtrUnsafe newarr return
               let dstBegin = dstBegin_ `plusPtr` arrEnd
               decompLenC <-
