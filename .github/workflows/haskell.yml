@@ -15,7 +15,7 @@ jobs:
       # ------------------------------------------------------------------------
       CABAL_REINIT_CONFIG: y
       LC_ALL: C.UTF-8
-      DISABLE_SDIST_BUILD: n
+      DISABLE_SDIST_BUILD: ${{ matrix.disable_sdist_build }}
 
       # ------------------------------------------------------------------------
       # cabal options
@@ -42,8 +42,6 @@ jobs:
       fail-fast: false
       matrix:
         name:
-          - 8.2.2
-          - 8.4.4
           - 8.6.5
           - 8.8.4
           - 8.10.7+fusion-plugin
@@ -54,54 +52,57 @@ jobs:
 
         include:
 
-          - name: 8.2.2
-            ghc_version: 8.2.2
-            runner: ubuntu-latest
-            cabal_version: 3.2
-
-          - name: 8.4.4
-            ghc_version: 8.4.4
-            runner: ubuntu-latest
-            cabal_version: 3.2
-
           - name: 8.6.5
             ghc_version: 8.6.5
             runner: ubuntu-latest
-            cabal_version: 3.2
+            cabal_version: 3.2.0.0
+            cabal_project: cabal.project.user
 
           - name: 8.8.4
             ghc_version: 8.8.4
             runner: ubuntu-latest
-            cabal_version: 3.2
+            cabal_version: 3.2.0.0
+            cabal_project: cabal.project.user
 
           - name: 8.10.7+fusion-plugin
             ghc_version: 8.10.7
             pack_options: CABAL_BUILD_OPTIONS="-f fusion-plugin"
             runner: ubuntu-latest
-            cabal_version: 3.2
+            cabal_version: 3.2.0.0
+            cabal_project: cabal.project.user
 
           - name: 9.0.1+werror
             ghc_version: 9.0.1
             runner: ubuntu-latest
             cabal_project: cabal.project.Werror
-            cabal_version: 3.2
+            cabal_version: 3.2.0.0
 
           - name: hlint
             ghc_version: 8.8.4
             pack_options: HLINT_OPTIONS="lint" HLINT_TARGETS="src"
             runner: ubuntu-latest
-            cabal_version: 3.2
+            cabal_version: 3.2.0.0
+            cabal_project: cabal.project.user
 
           - name: 8.10.7+macos
             ghc_version: 8.10.7
             runner: macos-latest
-            cabal_version: 3.2
+            cabal_version: 3.2.0.0
+            cabal_project: cabal.project.user
 
           - name: 9.2.1
             ghc_version: 9.2.1
             runner: ubuntu-latest
-            cabal_version: 3.6
+            cabal_version: 3.6.0.0
             pack_options: DISABLE_BENCH=y
+            cabal_project: cabal.project.user
+
+          - name: 9.4.2
+            ghc_version: 9.4.2
+            runner: ubuntu-latest
+            cabal_project: cabal.project.user
+            cabal_version: 3.8.1.0
+            disable_sdist_build: "y"
 
     steps:
     - uses: actions/checkout@v2

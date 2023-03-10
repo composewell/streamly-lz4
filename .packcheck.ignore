@@ -4,5 +4,6 @@ stack.yaml
 appveyor.yml
 .gitignore
 cabal.project.Werror
+cabal.project.user
 default.nix
 cabal.project

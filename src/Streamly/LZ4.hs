@@ -54,10 +54,8 @@ where
 
 import Control.Monad.IO.Class (MonadIO)
 import Data.Word (Word8)
-import Streamly.Internal.Data.Array.Foreign (Array)
-import Streamly.Prelude (SerialT)
-import Streamly.Internal.Data.Stream.IsStream.Type (fromStreamD, toStreamD)
-
+import Streamly.Data.Array (Array)
+import Streamly.Data.Stream (Stream)
 import Streamly.Internal.LZ4.Config
 import Streamly.Internal.LZ4
 
@@ -95,9 +93,9 @@ compressChunks ::
        MonadIO m
     => BlockConfig
     -> Int
-    -> SerialT m (Array Word8)
-    -> SerialT m (Array Word8)
-compressChunks cfg i m = fromStreamD (compressChunksD cfg i (toStreamD m))
+    -> Stream m (Array Word8)
+    -> Stream m (Array Word8)
+compressChunks cfg i m = (compressChunksD cfg i (m))
 
 --------------------------------------------------------------------------------
 -- Decompression
@@ -114,9 +112,8 @@ compressChunks cfg i m = fromStreamD (compressChunksD cfg i (toStreamD m))
 decompressChunks ::
        MonadIO m
     => BlockConfig
-    -> SerialT m (Array Word8)
-    -> SerialT m (Array Word8)
+    -> Stream m (Array Word8)
+    -> Stream m (Array Word8)
 decompressChunks bf =
-    fromStreamD
-        . decompressChunksRawD bf
-        . resizeChunksD bf defaultFrameConfig . toStreamD
+        decompressChunksRawD bf
+        . resizeChunksD bf defaultFrameConfig
