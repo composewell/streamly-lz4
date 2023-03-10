@@ -10,7 +10,6 @@ module Main (main) where
 
 import Control.Monad (unless)
 import Data.Function ((&))
-import Data.Semigroup (cycle1)
 import Data.Word (Word8)
 import Streamly.Data.Array (Array)
 import Streamly.Data.Stream (Stream)
@@ -81,7 +80,7 @@ bootstrap fp = do
             combinedStream =
                 Stream.foldMany (Array.writeN _64KB)
                     $ Stream.take _10MB
-                    $ cycle1 fileStream
+                    $ fileStream
         combinedStream & File.fromChunks normalizedFp
         combinedStream & LZ4.compressChunks LZ4.defaultBlockConfig 65537
                        & File.fromChunks compressedFpBig
