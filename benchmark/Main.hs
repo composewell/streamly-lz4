@@ -14,7 +14,6 @@ import Data.Semigroup (cycle1)
 import Data.Word (Word8)
 import Streamly.Data.Array (Array)
 import Streamly.Data.Stream (Stream)
-import Streamly.Internal.Data.Stream.Type (fromStreamD, toStreamD)
 import System.Directory (getCurrentDirectory, doesFileExist)
 import System.Environment (lookupEnv)
 
@@ -121,9 +120,9 @@ bootstrap fp = do
         -> Stream IO (Array.Array Word8)
     compressChunksFrame bf ff i_ strm =
         if LZ4.hasEndMark ff
-        then (fromStreamD . LZ4.compressChunksD bf i_ . toStreamD) strm
+        then (LZ4.compressChunksD bf i_) strm
                  `Stream.append` Stream.fromPure endMarkArr
-        else (fromStreamD . LZ4.compressChunksD bf i_ . toStreamD) strm
+        else (LZ4.compressChunksD bf i_) strm
 
 
 --------------------------------------------------------------------------------
@@ -161,16 +160,14 @@ decompress bufsize corpus =
 decompressWith :: Int -> String -> Benchmark
 decompressWith bufsize corpus =
     benchCorpus bufsize "decompressWith" corpus
-        $ fromStreamD
-        . LZ4.decompressChunksWithD LZ4.simpleFrameParserD . toStreamD
+        $ LZ4.decompressChunksWithD LZ4.simpleFrameParserD
 
 {-# INLINE resize #-}
 resize :: Int -> String -> Benchmark
 resize bufsize corpus =
     benchCorpus bufsize "resize" corpus
-        $ fromStreamD
-        . LZ4.resizeChunksD LZ4.defaultBlockConfig LZ4.defaultFrameConfig
-        . toStreamD
+        $ LZ4.resizeChunksD LZ4.defaultBlockConfig LZ4.defaultFrameConfig
+
 
 --------------------------------------------------------------------------------
 -- Reading environment
