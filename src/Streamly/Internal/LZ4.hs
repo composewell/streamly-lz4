@@ -1,4 +1,4 @@
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NamedFieldPuns, TypeApplications #-}
 -- |
 -- Module      : Streamly.Internal.LZ4
 -- Copyright   : (c) 2020 Composewell Technologies
@@ -51,23 +51,24 @@ import Fusion.Plugin.Types (Fuse (..))
 import System.IO.Unsafe (unsafePerformIO)
 
 import qualified Streamly.Data.Array as Array
-import qualified Streamly.Data.Array.Mut as MArray
+import qualified Streamly.Data.MutArray as MArray
 import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Internal.Data.Unboxed as Unbox
+
 import qualified Streamly.Internal.Data.Fold.Chunked as ArrayFold
     ( fromParserD )
 import qualified Streamly.Internal.Data.Stream.Chunked as ArrayStream
     ( runArrayFoldBreak )
 import qualified Streamly.Internal.Data.Array as Array
-    ( asPtrUnsafe, castUnsafe, unsafeFreeze )
+    ( asPtrUnsafe, castUnsafe, unsafeFreeze, unsafeThaw )
 import qualified Streamly.Internal.Data.Array.Mut.Type as MArray
-    ( Array(..), asPtrUnsafe, rightSize, touch )
+    ( MutArray(..), asPtrUnsafe, rightSize, touch )
 import qualified Streamly.Internal.Data.Array.Type as Array
     ( Array(..), byteLength, splice )
 import qualified Streamly.Internal.Data.Parser.ParserD as Parser
-    ( Parser, die, fromPure, satisfy, takeEQ )
+    ( Parser, ParseError(..), die, fromPure, satisfy, takeEQ )
 import qualified Streamly.Internal.Data.Stream as Stream
-    ( concatMapM, fromPure, fromStreamD, toStreamD )
+    ( concatMapM, fromPure, fromStreamK, toStreamK )
 import qualified Streamly.Internal.Data.Stream.StreamD as StreamD
     ( Step(..), Stream(..))
 
@@ -257,8 +258,8 @@ compressChunk cfg speed ctx arr = do
                 $ error $ "compressChunk: compressed length <= 0."
                     ++ " maxCompLenC: " ++ show maxCompLenC
                     ++ " uncompLenC: " ++ show uncompLenC
-              newarr@(MArray.Array cont arrStart arrEnd arrBound) <-
-                  MArray.newPinned (maxCompLen + metaSize_)
+              newarr@(MArray.MutArray cont arrStart arrEnd arrBound) <-
+                  MArray.newPinned @IO @Word8 (maxCompLen + metaSize_)
               dstBegin_ <- MArray.asPtrUnsafe newarr return
               let dstBegin = dstBegin_ `plusPtr` arrEnd
               let hdrCompLen = dstBegin `plusPtr` compSizeOffset_
@@ -274,7 +275,7 @@ compressChunk cfg speed ctx arr = do
               poke hdrCompLen (toLittleEndian (cIntToI32 compLenC))
               let compLen = cIntToInt compLenC
                   dstEnd = arrStart + compLen + metaSize_
-                  compArr = MArray.Array cont arrStart dstEnd arrBound
+                  compArr = MArray.MutArray cont arrStart dstEnd arrBound
               -- It is safe to shrink here as we need to hold the last 64KB of
               -- the previous uncompressed array and not the compressed one.
               Array.unsafeFreeze <$> MArray.rightSize compArr
@@ -329,8 +330,8 @@ decompressChunk cfg ctx arr = do
                   error $ "decompressChunk: compressed data length is more "
                     ++ "than the max limit: " ++ show maxCompLenC
 
-              newarr@(MArray.Array cont arrStart arrEnd arrBound)
-                  <- MArray.newPinned uncompLen
+              newarr@(MArray.MutArray cont arrStart arrEnd arrBound)
+                  <- MArray.newPinned @IO @Word8 uncompLen
               dstBegin_ <- MArray.asPtrUnsafe newarr return
               let dstBegin = dstBegin_ `plusPtr` arrEnd
               decompLenC <-
@@ -344,7 +345,7 @@ decompressChunk cfg ctx arr = do
                     ++ "\ndecompLenC = " ++ show decompLenC
               let decompLen = cIntToInt decompLenC
                   dstEnd = arrStart + decompLen
-                  decompArr = MArray.Array cont arrStart dstEnd arrBound
+                  decompArr = MArray.MutArray cont arrStart dstEnd arrBound
               -- We cannot shrink the array here, because that would reallocate
               -- the array invalidating the cached dictionary.
               return $ Array.unsafeFreeze decompArr
@@ -475,7 +476,7 @@ resizeChunksD cfg conf (StreamD.Stream step0 state0) =
         if len < 4
         then return $ StreamD.Skip $ RAccumulate st arr
         else do
-               res <- isEndMark (Unbox.castContents cont) b
+               res <- isEndMark (MArray.arrContents $ Array.unsafeThaw arr) b
                if res
                then return $ StreamD.Skip $ RFooter st arr
                else do
@@ -486,7 +487,7 @@ resizeChunksD cfg conf (StreamD.Stream step0 state0) =
                        compressedSize <-
                            i32ToInt . fromLittleEndian <$>
                                     Unbox.peekWith
-                                           (Unbox.castContents cont)
+                                           (MArray.arrContents $ Array.unsafeThaw arr)
                                            compLenPtr
                        let required = compressedSize + metaSize_
                        if len == required
@@ -589,14 +590,17 @@ decompressChunksWithD ::
     -> StreamD.Stream m (Array.Array Word8)
     -> StreamD.Stream m (Array.Array Word8)
 decompressChunksWithD p s =
-    Stream.toStreamD $
     Stream.concatMapM (\() -> generator) (Stream.fromPure ())
 
     where
 
     generator = do
-        ((cfg, config), next) <- ArrayStream.runArrayFoldBreak (ArrayFold.fromParserD p) (Stream.fromStreamD s)
-        return $ Stream.fromStreamD $ decompressChunksRawD cfg (resizeChunksD cfg config (Stream.toStreamD next))
+       -- ((cfg, config), next) <- ArrayStream.runArrayFoldBreak (ArrayFold.fromParserD p) (Stream.toStreamK s)
+        (res, next) <- ArrayStream.runArrayFoldBreak (ArrayFold.fromParserD p) (Stream.toStreamK s)
+        case res of
+            Left (Parser.ParseError err) -> error $ "parser error" ++ err
+            Right (cfg, config) ->
+                return $ decompressChunksRawD cfg (resizeChunksD cfg config (Stream.fromStreamK next))
 
 -- XXX Merge this with BlockConfig?
 data FLG =

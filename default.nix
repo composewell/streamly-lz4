@@ -14,14 +14,14 @@ let
     utils =
       let src = fetchGit {
             url = "git@github.com:composewell/composewell-haskell.git";
-            ref = "master";
+            ref = "update-some";
           }; in (import "${src}/utils.nix") { inherit nixpkgs; };
 
 
     haskellPackages =
       let src = fetchGit {
             url = "git@github.com:composewell/composewell-haskell.git";
-            ref = "master";
+            ref = "update-some";
           }; in (import "${src}/haskellPackages.nix")
             { inherit nixpkgs;
               inherit compiler; };
