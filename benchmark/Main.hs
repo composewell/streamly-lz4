@@ -76,7 +76,7 @@ bootstrap fp = do
     fileExists <- doesFileExist normalizedFp
     unless fileExists $ do
         putStrLn $ "Normalizing " ++ fp
-        let fileStream = Stream.unfold File.reader fp
+        let fileStream = Stream.unfold File.reader (cycle fp)
             combinedStream =
                 Stream.foldMany (Array.writeN _64KB)
                     $ Stream.take _10MB
