@@ -486,9 +486,9 @@ resizeChunksD cfg conf (StreamD.Stream step0 state0) =
                        let compLenPtr = b + compSizeOffset_
                        compressedSize <-
                            i32ToInt . fromLittleEndian <$>
-                                    Unbox.peekWith
-                                           (MArray.arrContents $ Array.unsafeThaw arr)
-                                           compLenPtr
+                                Unbox.peekWith
+                                    (MArray.arrContents $ Array.unsafeThaw arr)
+                                    compLenPtr
                        let required = compressedSize + metaSize_
                        if len == required
                        then return $ StreamD.Skip $ RYield arr $ RInit st
@@ -595,12 +595,16 @@ decompressChunksWithD p s =
     where
 
     generator = do
-       -- ((cfg, config), next) <- ArrayStream.runArrayFoldBreak (ArrayFold.fromParserD p) (Stream.toStreamK s)
-        (res, next) <- ArrayStream.runArrayFoldBreak (ArrayFold.fromParserD p) (Stream.toStreamK s)
+        (res, next) <-
+            ArrayStream.runArrayFoldBreak
+            (ArrayFold.fromParserD p)
+            (Stream.toStreamK s)
         case res of
             Left (Parser.ParseError err) -> error $ "parser error" ++ err
-            Right (cfg, config) ->
-                return $ decompressChunksRawD cfg (resizeChunksD cfg config (Stream.fromStreamK next))
+            Right (cfg, config) -> return $
+                decompressChunksRawD
+                cfg
+                (resizeChunksD cfg config (Stream.fromStreamK next))
 
 -- XXX Merge this with BlockConfig?
 data FLG =
