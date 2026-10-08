@@ -1,11 +1,6 @@
+resolver: lts-24.33
 packages:
 - '.'
-resolver: lts-18.18
-extra-deps:
-- unicode-data-0.3.0
-- streamly-0.8.2
 
-# Look at https://stackoverflow.com/questions/70045586/could-not-find-module-system-console-mintty-win32-when-compiling-test-framework
-flags:
-  mintty:
-    Win32-2-13-1: false
+extra-deps:
+- streamly-core-0.3.1

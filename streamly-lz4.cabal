@@ -14,13 +14,11 @@ maintainer:          streamly@composewell.com
 copyright:           2020 Composewell Technologies
 category:            Codec, Compression, Streamly
 build-type:          Simple
-tested-with:         GHC==8.2.2
-                   , GHC==8.4.4
-                   , GHC==8.6.5
-                   , GHC==8.8.4
-                   , GHC==8.10.7
-                   , GHC==9.0.1
-                   , GHC==9.2.1
+tested-with:         GHC==9.6.3
+                   , GHC==9.8.4
+                   , GHC==9.10.3
+                   , GHC==9.12.4
+                   , GHC==9.14.1
 extra-source-files:  CHANGELOG.md
                    , NOTICE
                    , README.md
