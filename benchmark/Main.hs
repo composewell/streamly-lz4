@@ -25,7 +25,7 @@ import qualified Streamly.Internal.LZ4 as LZ4
 import qualified Streamly.Internal.LZ4.Config as LZ4
 import qualified Streamly.LZ4 as LZ4
 
-import Gauge.Main
+import Test.Tasty.Bench
 
 {-# INLINE _64KB #-}
 _64KB :: Int
