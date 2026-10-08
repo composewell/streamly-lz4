@@ -9,18 +9,17 @@
 module Main (main) where
 
 import Control.Monad (unless)
-import Data.Semigroup (cycle1)
 import Data.Word (Word8)
 import Data.Function ((&))
-import Streamly.Internal.Data.Array.Foreign (Array)
-import Streamly.Internal.Data.Stream.IsStream.Type (fromStreamD, toStreamD)
-import Streamly.Prelude (SerialT)
+import Streamly.Data.Array (Array)
+import Streamly.Data.Stream (Stream)
 import System.Directory (getCurrentDirectory, doesFileExist)
 import System.Environment (lookupEnv)
 
-import qualified Streamly.Internal.Data.Stream.IsStream as Stream
-import qualified Streamly.Internal.Data.Array.Foreign as Array
-import qualified Streamly.Internal.FileSystem.File as File
+import qualified Streamly.Internal.Data.Stream as Stream
+import qualified Streamly.Internal.Data.Array as Array
+import qualified Streamly.Internal.FileSystem.FileIO as File
+import qualified Streamly.Internal.FileSystem.Path as Path
 import qualified Streamly.Internal.LZ4 as LZ4
 import qualified Streamly.Internal.LZ4.Config as LZ4
 import qualified Streamly.LZ4 as LZ4
@@ -76,16 +75,17 @@ bootstrap fp = do
     fileExists <- doesFileExist normalizedFp
     unless fileExists $ do
         putStrLn $ "Normalizing " ++ fp
-        let fileStream = Stream.unfold File.read fp
+        let fileStream = File.read (Path.fromString_ fp)
             combinedStream =
-                Stream.arraysOf _64KB
+                Array.chunksOf _64KB
                     $ Stream.take _10MB
-                    $ cycle1 fileStream
-        combinedStream & File.fromChunks normalizedFp
+                    $ Stream.concatMap (const fileStream)
+                    $ Stream.repeat ()
+        combinedStream & File.fromChunks (Path.fromString_ normalizedFp)
         combinedStream & LZ4.compressChunks LZ4.defaultBlockConfig 65537
-                       & File.fromChunks compressedFpBig
+                       & File.fromChunks (Path.fromString_ compressedFpBig)
         combinedStream & LZ4.compressChunks LZ4.defaultBlockConfig 1
-                       & File.fromChunks compressedFpSmall
+                       & File.fromChunks (Path.fromString_ compressedFpSmall)
         -- Stream with header that returns the config
         -- Magic Little endian (4 bytes) = 407708164
         let magicLE = [4, 34, 77, 24]
@@ -96,11 +96,13 @@ bootstrap fp = do
             headerChk = 0
             headerList = magicLE ++ [flg, bd, headerChk]
             header = Stream.fromList headerList
-        headerArr <- Stream.fold (Array.writeN (length headerList)) header
-        (bf, ff) <- Stream.parseD LZ4.simpleFrameParserD header
+        headerArr <- Stream.fold (Array.createOf (length headerList)) header
+        (bf, ff) <-
+            either (error . show) id
+                <$> Stream.parse LZ4.simpleFrameParserD header
         combinedStream & compressChunksFrame bf ff 65537
                        & Stream.cons headerArr
-                       & File.fromChunks compressedWith
+                       & File.fromChunks (Path.fromString_ compressedWith)
 
     where
 
@@ -112,27 +114,27 @@ bootstrap fp = do
         :: LZ4.BlockConfig
         -> LZ4.FrameConfig
         -> Int
-        -> Stream.SerialT IO (Array.Array Word8)
-        -> Stream.SerialT IO (Array.Array Word8)
+        -> Stream IO (Array.Array Word8)
+        -> Stream IO (Array.Array Word8)
     compressChunksFrame bf ff i_ strm =
         if LZ4.hasEndMark ff
-        then (fromStreamD . LZ4.compressChunksD bf i_ . toStreamD) strm
+        then LZ4.compressChunksD bf i_ strm
                  `Stream.append` Stream.fromPure endMarkArr
-        else (fromStreamD . LZ4.compressChunksD bf i_ . toStreamD) strm
+        else LZ4.compressChunksD bf i_ strm
 
 
 --------------------------------------------------------------------------------
 -- Benchmark helpers
 --------------------------------------------------------------------------------
 
-type Combinator = SerialT IO (Array Word8) -> SerialT IO (Array Word8)
+type Combinator = Stream IO (Array Word8) -> Stream IO (Array Word8)
 
 {-# INLINE benchCorpus #-}
 benchCorpus :: Int -> String -> String -> Combinator -> Benchmark
 benchCorpus bufsize name corpus combinator =
     let bname = ("bufsize(" ++ show bufsize ++ ")/" ++ name ++ "/" ++ corpus)
      in bench bname $ nfIO $ do
-            Stream.unfold File.readChunksWithBufferOf (bufsize, corpus)
+            File.readChunksWith bufsize (Path.fromString_ corpus)
                 & combinator
                 & Stream.drain
 
@@ -156,16 +158,13 @@ decompress bufsize corpus =
 decompressWith :: Int -> String -> Benchmark
 decompressWith bufsize corpus =
     benchCorpus bufsize "decompressWith" corpus
-        $ fromStreamD
-        . LZ4.decompressChunksWithD LZ4.simpleFrameParserD . toStreamD
+        $ LZ4.decompressChunksWithD LZ4.simpleFrameParserD
 
 {-# INLINE resize #-}
 resize :: Int -> String -> Benchmark
 resize bufsize corpus =
     benchCorpus bufsize "resize" corpus
-        $ fromStreamD
-        . LZ4.resizeChunksD LZ4.defaultBlockConfig LZ4.defaultFrameConfig
-        . toStreamD
+        $ LZ4.resizeChunksD LZ4.defaultBlockConfig LZ4.defaultFrameConfig
 
 --------------------------------------------------------------------------------
 -- Reading environment
@@ -195,7 +194,7 @@ data Strategy
 parseStrategy :: String -> Strategy
 parseStrategy ('c':_:r) =
     let (speed, pbufsize) = span (/= '+') r
-     in Compress (read speed) (read (tail pbufsize))
+     in Compress (read speed) (read (drop 1 pbufsize))
 parseStrategy ('d':_:r) = Decompress (read r)
 parseStrategy ('r':_:r) = Resize (read r)
 parseStrategy _ = error "Cannot parse BENCH_STREAMLY_LZ4_STRATEGY"
